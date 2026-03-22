@@ -280,8 +280,32 @@ function initEvents() {
    BOOT
    ============================================================ */
 window.addEventListener('DOMContentLoaded', async () => {
+    InitLog.start();
+    InitLog.step('initEvents');
     initEvents();
-    await App.init();
+    InitLog.done('initEvents');
+    try {
+        await App.init();
+    } catch (err) {
+        InitLog.error('App.init', err);
+        // Show a visible error instead of leaving the user on a grey screen
+        const ol = document.getElementById('loading-overlay');
+        if (ol) {
+            ol.innerHTML = `
+              <div style="text-align:center;max-width:380px;padding:0 24px">
+                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" style="color:#f44747;margin-bottom:16px" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L2 20h20z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                  <path d="M12 9v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <circle cx="12" cy="16.5" r="0.8" fill="currentColor"/>
+                </svg>
+                <div style="color:var(--text);font-size:16px;font-weight:600;margin-bottom:8px">Failed to initialize</div>
+                <div style="color:var(--text-dim);font-size:13px;line-height:1.7;margin-bottom:16px">${escHtml(String(err?.message || err))}</div>
+                <button class="btn btn-primary" onclick="location.reload()">Reload</button>
+              </div>`;
+            ol.style.cssText += 'display:flex;opacity:1;pointer-events:all;';
+        }
+    }
+    InitLog.finish();
 });
 
 /* ============================================================

@@ -7,23 +7,41 @@ const DB = (() => {
     let _db = null;
 
     async function init() {
+        InitLog.step('DB open (SafeNovaEFS)');
         return new Promise((res, rej) => {
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (!settled) { settled = true; InitLog.error('DB open (SafeNovaEFS)', 'timeout'); rej(new Error('SafeNovaEFS open timeout')); }
+            }, 8000);
+            const done = (db) => { if (!settled) { settled = true; clearTimeout(timer); _db = db; InitLog.done('DB open (SafeNovaEFS)'); res(); } };
+            const fail = (e)  => { if (!settled) { settled = true; clearTimeout(timer); InitLog.error('DB open (SafeNovaEFS)', e); rej(e); } };
+
             const req = indexedDB.open(DB_NAME, DB_VERSION);
             req.onupgradeneeded = e => {
-                const db = e.target.result;
-                if (!db.objectStoreNames.contains('containers')) {
-                    db.createObjectStore('containers', { keyPath: 'id' });
-                }
-                if (!db.objectStoreNames.contains('files')) {
-                    const fs = db.createObjectStore('files', { keyPath: 'id' });
-                    fs.createIndex('cid', 'cid');
-                }
-                if (!db.objectStoreNames.contains('vfs')) {
-                    db.createObjectStore('vfs', { keyPath: 'cid' });
-                }
+                InitLog.step('DB schema upgrade');
+                try {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('containers')) {
+                        db.createObjectStore('containers', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('files')) {
+                        const fs = db.createObjectStore('files', { keyPath: 'id' });
+                        fs.createIndex('cid', 'cid');
+                    }
+                    if (!db.objectStoreNames.contains('vfs')) {
+                        db.createObjectStore('vfs', { keyPath: 'cid' });
+                    }
+                    InitLog.done('DB schema upgrade');
+                } catch (err) { InitLog.error('DB schema upgrade', err); fail(err); }
             };
-            req.onsuccess = e => { _db = e.target.result; res(); };
-            req.onerror = () => rej(req.error);
+            req.onsuccess = e => done(e.target.result);
+            req.onerror   = () => fail(req.error);
+            req.onblocked = () => {
+                // Another connection prevents upgrade; close it by requesting versionchange on self
+                InitLog.error('DB open (SafeNovaEFS)', 'blocked — waiting for other connections to close');
+                // Keep waiting — the blocked event does NOT mean failure, just delay.
+                // If it takes longer than the timeout above, we fail gracefully.
+            };
         });
     }
 

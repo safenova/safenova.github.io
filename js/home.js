@@ -13,6 +13,7 @@ function _saveCardOrder(ids) {
 
 const Home = {
     async render() {
+        InitLog.step('Home.render');
         const grid = document.getElementById('container-grid'),
             empty = document.getElementById('container-empty'),
             containers = await DB.getContainers();
@@ -81,6 +82,7 @@ const Home = {
                 _applyDoc(false);
             };
         }
+        InitLog.done('Home.render', containers.length + ' container(s)');
     },
 
     _makeCard(c) {

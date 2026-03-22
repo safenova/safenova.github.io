@@ -13,11 +13,19 @@
    Persistent  (snv-sb-{cid}  in localStorage)  ["Stay signed in"]:
    • Encrypted with snv-bsk — a shared AES-256-GCM key in localStorage.
    • snv-bsk itself is AES-GCM-encrypted before being stored — the
-     wrapping key is derived on-the-fly via HKDF from a browser
-     fingerprint (origin, language, hardwareConcurrency, colorDepth)
-     and NEVER written to any storage.  Copying localStorage to a
-     different machine/browser usually produces a different fingerprint
-     → wrap-key differs → snv-bsk undecryptable → blobs opaque.
+     wrapping key is derived on-the-fly via HKDF from THREE independent
+     sources and NEVER written to any storage:
+       1. Browser fingerprint (origin, language, hardwareConcurrency,
+          colorDepth, pixelDepth) — deterministic, stable.
+       2. 32 random bytes in a cookie (snv-kc, SameSite=Strict) —
+          survives across sessions, isolated from localStorage.
+       3. 32 random bytes in a separate IndexedDB (SafeNovaKS) —
+          independent from the main SafeNovaEFS database.
+     An attacker must compromise ALL three storage mechanisms
+     simultaneously to reconstruct the wrap-key.
+     Copying localStorage alone is useless — without the matching
+     cookie AND the SafeNovaKS database AND the same browser
+     fingerprint, snv-bsk is undecryptable.
      NOTE: navigator.userAgent is intentionally excluded from the
      fingerprint because Chrome auto-updates silently and would
      invalidate the session on every update.
@@ -28,8 +36,9 @@
    • Tab-scope blobs → only the originating tab can decrypt them
      (key in sessionStorage, not shared).
    • Persistent blobs → any tab of the SAME browser can decrypt
-     them (shared snv-bsk, same fingerprint → same wrap-key).
-   • A copied localStorage is useless without the matching browser.
+     them (shared snv-bsk, same fingerprint + cookie + IDB → same wrap-key).
+   • A copied localStorage is useless without the matching browser,
+     cookie, and SafeNovaKS IndexedDB.
    ============================================================ */
 
 /* ── Tab-scope session key (sessionStorage, per-tab) ── */
@@ -54,7 +63,17 @@ async function _getOrCreateSessionKey() {
 }
 
 /* ── Browser fingerprint → HKDF wrap-key (never stored) ──
-   Derived deterministically from STABLE browser properties.
+   The wrap-key is derived from THREE independent sources:
+   1. Browser fingerprint (deterministic, stable across sessions)
+   2. Random 32-byte secret stored in a cookie (snv-kc)
+   3. Random 32-byte secret stored in a SEPARATE IndexedDB (SafeNovaKS)
+
+   An attacker must compromise ALL three storage mechanisms
+   simultaneously to reconstruct the wrap-key:
+   • localStorage alone is useless (no cookie or IDB secret)
+   • A disk image copy lacks the cookie (browser-bound)
+   • Clearing cookies or the key-store IDB invalidates the key
+
    Intentionally excludes navigator.userAgent (changes on every
    Chrome silent auto-update) and navigator.platform (deprecated).
    Properties used are stable across browser version updates. */
@@ -71,12 +90,117 @@ function _getBrowserFingerprint() {
     ].join('\x00');
 }
 
+/* ── Cookie key-part (snv-kc): 32 random bytes ── */
+function _readKeyPartCookie() {
+    const m = document.cookie.match(/(?:^|;\s*)snv-kc=([A-Za-z0-9+/=]+)/);
+    return m ? m[1] : null;
+}
+
+function _writeKeyPartCookie(b64) {
+    const maxAge = 400 * 24 * 60 * 60; // ~400 days (browser max-age ceiling)
+    const secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = `snv-kc=${b64}; path=/; max-age=${maxAge}; SameSite=Strict${secure}`;
+}
+
+async function _getOrCreateKeyPartCookie() {
+    InitLog.step('wrap-key: cookie part');
+    const existing = _readKeyPartCookie();
+    if (existing) {
+        try {
+            const bytes = Uint8Array.from(atob(existing), c => c.charCodeAt(0));
+            if (bytes.length === 32) {
+                _writeKeyPartCookie(existing); // refresh max-age
+                InitLog.done('wrap-key: cookie part', 'existing');
+                return bytes;
+            }
+        } catch { /* corrupted — regenerate */ }
+    }
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    _writeKeyPartCookie(btoa(String.fromCharCode(...bytes)));
+    InitLog.done('wrap-key: cookie part', 'new');
+    return bytes;
+}
+
+/* ── IndexedDB key-part (SafeNovaKS): 32 random bytes in an
+   independent database, separate from the main SafeNovaEFS ── */
+const _KS_DB_NAME = 'SafeNovaKS';
+const _KS_TIMEOUT = 4000; // 4 s — abort if IDB hangs (blocked, quota, etc.)
+
+async function _getOrCreateKeyPartIDB() {
+    InitLog.step('wrap-key: SafeNovaKS IDB');
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('SafeNovaKS open timeout')), _KS_TIMEOUT);
+        let settled = false;
+        const done = (v)  => { if (!settled) { settled = true; clearTimeout(timer); InitLog.done('wrap-key: SafeNovaKS IDB'); resolve(v); } };
+        const fail = (e)  => { if (!settled) { settled = true; clearTimeout(timer); InitLog.error('wrap-key: SafeNovaKS IDB', e); reject(e);  } };
+
+        let db;
+        try {
+            const req = indexedDB.open(_KS_DB_NAME, 1);
+            req.onupgradeneeded = e => {
+                try {
+                    db = e.target.result;
+                    if (!db.objectStoreNames.contains('keys'))
+                        db.createObjectStore('keys', { keyPath: 'id' });
+                } catch (err) { fail(err); }
+            };
+            req.onblocked = () => fail(new Error('SafeNovaKS blocked'));
+            req.onerror   = () => fail(req.error);
+            req.onsuccess = e => {
+                try {
+                    db = e.target.result;
+                    const tx = db.transaction('keys', 'readonly');
+                    const get = tx.objectStore('keys').get('snv-ki');
+                    get.onsuccess = () => {
+                        try {
+                            const rec = get.result;
+                            if (rec && rec.value instanceof Uint8Array && rec.value.length === 32) {
+                                db.close();
+                                done(rec.value);
+                            } else {
+                                const bytes = crypto.getRandomValues(new Uint8Array(32));
+                                const tx2 = db.transaction('keys', 'readwrite');
+                                tx2.objectStore('keys').put({ id: 'snv-ki', value: bytes });
+                                tx2.oncomplete = () => { db.close(); done(bytes); };
+                                tx2.onerror    = () => { db.close(); fail(tx2.error); };
+                            }
+                        } catch (err) { try { db.close(); } catch {} fail(err); }
+                    };
+                    get.onerror = () => { try { db.close(); } catch {} fail(get.error); };
+                } catch (err) { try { db?.close(); } catch {} fail(err); }
+            };
+        } catch (err) { fail(err); }
+    });
+}
+
 async function _getOrCreateBrowserWrapKey() {
     if (_browserWrapKey) return _browserWrapKey;
+    InitLog.step('wrap-key: HKDF derive');
+
+    // 1. Deterministic browser fingerprint
     const fpBytes = new TextEncoder().encode(_getBrowserFingerprint());
-    const hkdf = await crypto.subtle.importKey('raw', fpBytes, 'HKDF', false, ['deriveKey']);
+
+    // 2. Random secret from cookie (graceful degradation: zero-fill on failure)
+    let cookiePart;
+    try { cookiePart = await _getOrCreateKeyPartCookie(); }
+    catch { cookiePart = new Uint8Array(32); }
+
+    // 3. Random secret from separate IndexedDB (graceful degradation: zero-fill on failure)
+    let idbPart;
+    try { idbPart = await _getOrCreateKeyPartIDB(); }
+    catch { idbPart = new Uint8Array(32); }
+
+    // Concatenate all three components: fingerprint \0 cookie(32) \0 idb(32)
+    const combined = new Uint8Array(fpBytes.length + 1 + 32 + 1 + 32);
+    combined.set(fpBytes);
+    combined[fpBytes.length] = 0;
+    combined.set(cookiePart, fpBytes.length + 1);
+    combined[fpBytes.length + 1 + 32] = 0;
+    combined.set(idbPart, fpBytes.length + 1 + 32 + 1);
+
+    const hkdf = await crypto.subtle.importKey('raw', combined, 'HKDF', false, ['deriveKey']);
     const salt = new Uint8Array(32); // all-zero deterministic salt
-    const info = new TextEncoder().encode('snv-browser-wrap-v1');
+    const info = new TextEncoder().encode('snv-browser-wrap-v2');
     _browserWrapKey = await crypto.subtle.deriveKey(
         { name: 'HKDF', hash: 'SHA-256', salt, info },
         hkdf,
@@ -84,6 +208,7 @@ async function _getOrCreateBrowserWrapKey() {
         false,
         ['encrypt', 'decrypt']
     );
+    InitLog.done('wrap-key: HKDF derive');
     return _browserWrapKey;
 }
 
@@ -92,6 +217,7 @@ let _browserScopeKey = null;
 
 async function _getOrCreateBrowserScopeKey() {
     if (_browserScopeKey) return _browserScopeKey;
+    InitLog.step('browser-scope-key');
     const wrapKey = await _getOrCreateBrowserWrapKey();
     const stored = localStorage.getItem('snv-bsk');
     if (stored) {
@@ -109,6 +235,7 @@ async function _getOrCreateBrowserScopeKey() {
                 newBlob.set(new Uint8Array(ct), 12);
                 localStorage.setItem('snv-bsk', btoa(String.fromCharCode(...newBlob)));
                 _browserScopeKey = await crypto.subtle.importKey('raw', rawExported, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+                InitLog.done('browser-scope-key', 'legacy-migrated');
                 return _browserScopeKey;
             } catch { /* corrupted legacy key — regenerate below */ }
         } else {
@@ -117,6 +244,7 @@ async function _getOrCreateBrowserScopeKey() {
                 const iv = blobBytes.slice(0, 12), ct = blobBytes.slice(12);
                 const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, ct);
                 _browserScopeKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+                InitLog.done('browser-scope-key', 'existing');
                 return _browserScopeKey;
             } catch { /* fingerprint changed or corrupted — regenerate below */ }
         }
@@ -130,6 +258,7 @@ async function _getOrCreateBrowserScopeKey() {
     blob.set(new Uint8Array(ct), 12);
     localStorage.setItem('snv-bsk', btoa(String.fromCharCode(...blob)));
     _browserScopeKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    InitLog.done('browser-scope-key', 'new');
     return _browserScopeKey;
 }
 
@@ -285,6 +414,7 @@ const App = {
     _ctxScreenPos: null, // screen {x,y} of last context-menu click (used to position new files/folders)
 
     async init() {
+        InitLog.step('App.init');
         if (!window.isSecureContext || !window.crypto?.subtle) {
             const ol = document.getElementById('loading-overlay');
             if (ol) {
@@ -309,6 +439,7 @@ const App = {
         this.showView('home');
         await Home.render();
         await updateStorageInfo();
+        InitLog.done('App.init');
     },
 
     showView(name) {
