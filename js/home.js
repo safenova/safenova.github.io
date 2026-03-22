@@ -791,7 +791,10 @@ async function doUnlock() {
             const scope = document.querySelector('input[name="remember-scope"]:checked')?.value || 'tab';
             try {
                 await saveSession(c.id, _sessionRawKey, scope);
-            } catch { /* non-critical */ }
+            } catch (sessErr) {
+                console.error('[SafeNova] saveSession failed:', sessErr);
+                toast('Session could not be saved — you will need to re-enter the password next time', 'warn');
+            }
         } else {
             // Checkbox unchecked — clear any previously saved session
             clearSession(c.id);

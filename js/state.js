@@ -154,9 +154,15 @@ async function _getOrCreateKeyPartIDB() {
                     get.onsuccess = () => {
                         try {
                             const rec = get.result;
-                            if (rec && rec.value instanceof Uint8Array && rec.value.length === 32) {
+                            // Defensive: IDB structured clone may return ArrayBuffer,
+                            // DataView, or Uint8Array depending on browser internals
+                            const val = rec?.value;
+                            const bytes = val instanceof Uint8Array ? val
+                                : val instanceof ArrayBuffer ? new Uint8Array(val)
+                                : (val?.buffer instanceof ArrayBuffer ? new Uint8Array(val.buffer) : null);
+                            if (bytes && bytes.length === 32) {
                                 db.close();
-                                done(rec.value);
+                                done(bytes);
                             } else {
                                 const bytes = crypto.getRandomValues(new Uint8Array(32));
                                 const tx2 = db.transaction('keys', 'readwrite');
@@ -180,15 +186,21 @@ async function _getOrCreateBrowserWrapKey() {
     // 1. Deterministic browser fingerprint
     const fpBytes = new TextEncoder().encode(_getBrowserFingerprint());
 
-    // 2. Random secret from cookie (graceful degradation: zero-fill on failure)
+    // 2. Random secret from cookie
     let cookiePart;
     try { cookiePart = await _getOrCreateKeyPartCookie(); }
-    catch { cookiePart = new Uint8Array(32); }
+    catch (e) {
+        InitLog.error('wrap-key: cookie part', e);
+        throw new Error('Cookie key-part unavailable: ' + (e?.message || e));
+    }
 
-    // 3. Random secret from separate IndexedDB (graceful degradation: zero-fill on failure)
+    // 3. Random secret from separate IndexedDB
     let idbPart;
     try { idbPart = await _getOrCreateKeyPartIDB(); }
-    catch { idbPart = new Uint8Array(32); }
+    catch (e) {
+        InitLog.error('wrap-key: SafeNovaKS IDB', e);
+        throw new Error('IDB key-part unavailable: ' + (e?.message || e));
+    }
 
     // Concatenate all three components: fingerprint \0 cookie(32) \0 idb(32)
     const combined = new Uint8Array(fpBytes.length + 1 + 32 + 1 + 32);
@@ -218,7 +230,16 @@ let _browserScopeKey = null;
 async function _getOrCreateBrowserScopeKey() {
     if (_browserScopeKey) return _browserScopeKey;
     InitLog.step('browser-scope-key');
-    const wrapKey = await _getOrCreateBrowserWrapKey();
+    let wrapKey;
+    try {
+        wrapKey = await _getOrCreateBrowserWrapKey();
+    } catch (e) {
+        // If wrap-key derivation fails (cookie/IDB unavailable), persistent
+        // sessions cannot work. Clear any stored snv-bsk and propagate.
+        InitLog.error('browser-scope-key', 'wrap-key derivation failed: ' + e?.message);
+        localStorage.removeItem('snv-bsk');
+        throw e;
+    }
     const stored = localStorage.getItem('snv-bsk');
     if (stored) {
         const blobBytes = Uint8Array.from(atob(stored), ch => ch.charCodeAt(0));
@@ -314,11 +335,13 @@ async function loadSession(cid) {
         try {
             const key = await _getOrCreateSessionKey();
             const raw = await _decryptSessionPayload(key, cid, tabBlob);
-            if (raw) return raw;
+            if (raw) { InitLog.done('loadSession', 'tab-scope OK'); return raw; }
             // null means expired
+            InitLog.error('loadSession', 'tab-scope expired');
             sessionStorage.removeItem('snv-s-' + cid);
-        } catch {
+        } catch (e) {
             // Corrupted tab blob — belongs to this tab, safe to clear
+            InitLog.error('loadSession', 'tab-scope error: ' + (e?.message || e));
             sessionStorage.removeItem('snv-s-' + cid);
         }
     }
@@ -329,11 +352,13 @@ async function loadSession(cid) {
         try {
             const key = await _getOrCreateBrowserScopeKey();
             const raw = await _decryptSessionPayload(key, cid, browserBlob);
-            if (raw) return raw;
+            if (raw) { InitLog.done('loadSession', 'browser-scope OK'); return raw; }
             // null means expired
+            InitLog.error('loadSession', 'browser-scope expired');
             localStorage.removeItem('snv-sb-' + cid);
-        } catch {
-            // Corrupted blob — remove it
+        } catch (e) {
+            // Corrupted blob or wrap-key unavailable — remove it
+            InitLog.error('loadSession', 'browser-scope error: ' + (e?.message || e));
             localStorage.removeItem('snv-sb-' + cid);
         }
     }
