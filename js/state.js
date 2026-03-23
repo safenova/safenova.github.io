@@ -112,12 +112,12 @@ function _getBrowserFingerprint() {
     const n = navigator, s = screen;
     return [
         window.location.origin,              // deployment-bound
-        n.userAgent        || '',            // browser + OS version
-        n.platform         || '',            // OS/CPU platform
-        n.language         || '',            // system language
+        n.userAgent || '',                   // browser + OS version
+        n.platform || '',                    // OS/CPU platform
+        n.language || '',                    // system language
         String(n.hardwareConcurrency || 0),  // CPU core count
-        String(s.colorDepth  || 0),          // display bit depth
-        String(s.pixelDepth  || 0),
+        String(s.colorDepth || 0),           // display bit depth
+        String(s.pixelDepth || 0),
     ].join('\x00');
 }
 

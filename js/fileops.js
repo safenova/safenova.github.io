@@ -519,6 +519,8 @@ async function pasteItems() {
         }
     }
 
+    const _srcParent = VFS.node(ids[0])?.parentId,
+        _srcFolderPath = _srcParent ? VFS.fullPath(_srcParent) : null;
     let _pastedSn = null;
     const _pastedIds = [];
     for (const id of ids) {
@@ -564,9 +566,7 @@ async function pasteItems() {
     // Refresh all open views so both source and target folders update
     Desktop._patchIcons();
     if (typeof WinManager !== 'undefined') WinManager.renderAll();
-    const _destName = VFS.node(App.folder)?.name || 'Desktop';
-    const _pastedFp = ids.length === 1 && _pastedSn ? VFS.fullPath(App.folder) : null;
-    logActivity('paste', ids.length === 1 ? `${_pastedSn ?? VFS.node(ids[0])?.name ?? '1 item'} → ${_destName}` : `${ids.length} items → ${_destName}`, ids.length, _pastedFp && _pastedFp !== '/' ? _pastedFp + '/' + _pastedSn : null);
+    logActivity('paste', ids.length === 1 ? (_pastedSn ?? VFS.node(ids[0])?.name ?? '1 item') : `${ids.length} items`, ids.length, _srcFolderPath, VFS.fullPath(App.folder));
 }
 
 async function deepCopy(nodeId, newParent, newName, _depth = 0) {

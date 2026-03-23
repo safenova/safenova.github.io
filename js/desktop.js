@@ -91,16 +91,17 @@ function _openFolderGuard(ids) {
 }
 
 // ── logActivity ─────────────────────────────────────────────
-function logActivity(op, detail, count, itemPath) {
+function logActivity(op, detail, count, itemPath, destPath) {
     if (!App.container) return;
     if (_getSettings().activityLogs === false) return;
     const entry = { t: Date.now(), o: op, d: detail };
     if (count > 1) entry.n = count;
     let p = itemPath ?? null;
-    if (!p && App.folder && App.folder !== 'root') {
+    if (!p && App.folder) {
         p = VFS.fullPath(App.folder);
     }
     if (p && p !== '/') entry.p = p;
+    if (destPath && destPath !== '/') entry.p2 = destPath;
     _activityLog.push(entry);
     if (_activityLog.length > ALOG_MAX) _activityLog.splice(0, _activityLog.length - ALOG_MAX);
     if (_alogSaveTimer) clearTimeout(_alogSaveTimer);
@@ -252,8 +253,15 @@ function _renderActivityLogs() {
             mainText = it.d || '',
             pathFull = it.p ? (it.n > 1 && !it.p.endsWith('/') ? it.p + '/' : it.p) : '',
             pathShort = _alogPathDisplay(pathFull),
-            pathHtml = pathShort ? `<code class="alog-path-chip" title="${escHtml(pathFull)}">${escHtml(pathShort)}</code>` : '',
+            destFull = it.p2 || '',
+            destShort = _alogPathDisplay(destFull),
             time = _alogRelTime(it.t);
+        let pathHtml = '';
+        if (pathShort && destShort) {
+            pathHtml = `<span class="alog-paths"><code class="alog-path-chip" title="${escHtml(pathFull)}">${escHtml(pathShort)}</code><span class="alog-arrow">\u2192</span><code class="alog-path-chip" title="${escHtml(destFull)}">${escHtml(destShort)}</code></span>`;
+        } else if (pathShort) {
+            pathHtml = `<code class="alog-path-chip" title="${escHtml(pathFull)}">${escHtml(pathShort)}</code>`;
+        }
         html += `<div class="alog-item"><span class="alog-badge" style="--bc:${color}">${escHtml(label)}</span><span class="alog-detail"><span class="alog-detail-main" title="${escHtml(mainText)}">${escHtml(mainText)}</span>${pathHtml}</span><span class="alog-time">${escHtml(time)}</span></div>`;
     }
     contentEl.innerHTML = html;
@@ -1701,7 +1709,7 @@ function _initTouchDragCommon(area, owner, opts = {}) {
                     area._iconMap?.delete(id);
                 }
             });
-            if (moved.length) logActivity('move', `${moved.length} item${moved.length > 1 ? 's' : ''} \u2192 ${VFS.node(hoverTarget)?.name || 'folder'}`, moved.length);
+            if (moved.length) logActivity('move', moved.length === 1 ? (VFS.node(moved[0])?.name ?? '1 item') : `${moved.length} items`, moved.length, VFS.fullPath(owner.folderId), VFS.fullPath(hoverTarget));
             moved.forEach(id => owner.selection.delete(id));
         } else {
             // Snap to grid in place
@@ -1931,11 +1939,9 @@ function _startIconDrag(e, node, el, srcCtx) {
             movedIds.push(id);
         }
         if (movedIds.length) {
-            const _mvDest = VFS.node(destFid)?.name || 'folder';
             logActivity('move',
-                movedIds.length === 1 ? `${VFS.node(movedIds[0])?.name} → ${_mvDest}` : `${movedIds.length} items → ${_mvDest}`,
-                movedIds.length,
-                movedIds.length === 1 ? VFS.fullPath(movedIds[0]) : VFS.fullPath(destFid));
+                movedIds.length === 1 ? (VFS.node(movedIds[0])?.name ?? '1 item') : `${movedIds.length} items`,
+                movedIds.length, VFS.fullPath(srcCtx.folderId), VFS.fullPath(destFid));
         }
         return movedIds;
     }
@@ -2262,9 +2268,8 @@ function _startIconDrag(e, node, el, srcCtx) {
                 }
             });
             if (movedIds.length) logActivity('move',
-                movedIds.length === 1 ? `${VFS.node(movedIds[0])?.name} → Desktop` : `${movedIds.length} items → Desktop`,
-                movedIds.length,
-                movedIds.length === 1 ? VFS.fullPath(movedIds[0]) : null);
+                movedIds.length === 1 ? (VFS.node(movedIds[0])?.name ?? '1 item') : `${movedIds.length} items`,
+                movedIds.length, VFS.fullPath(srcCtx.folderId), VFS.fullPath(deskFid));
             srcCtx.updateUI();
             await saveVFS();
             Desktop._patchIcons();

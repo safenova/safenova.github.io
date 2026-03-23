@@ -75,7 +75,7 @@
     // replaces them with Object.defineProperty, our saved refs still
     // point to the real storage objects, so _nukeStorage cannot be
     // fooled by a getter-level interception.
-    const _ls = (() => { try { return window.localStorage;   } catch { return null; } })();
+    const _ls = (() => { try { return window.localStorage; } catch { return null; } })();
     const _ss = (() => { try { return window.sessionStorage; } catch { return null; } })();
 
     /* ──────────────────────────────────────────────────────────
@@ -301,7 +301,7 @@
        ────────────────────────────────────────────────────────── */
 
     // ── Inner implementations (closure-private) ────────────────
-    const _fetchImpl = function(input) {
+    const _fetchImpl = function (input) {
         const url = (input instanceof Request) ? input.url : String(input ?? '');
         if (_isExternal(url)) {
             _triggerAlert('Outbound fetch blocked → ' + url);
@@ -310,7 +310,7 @@
         return _N.fetch.apply(this === window ? window : globalThis, arguments);
     };
 
-    const _xhrOpenImpl = function(method, url) {
+    const _xhrOpenImpl = function (method, url) {
         if (_isExternal(String(url ?? ''))) {
             _triggerAlert('Outbound XHR blocked → ' + url);
             throw new Error('[SafeNova Proactive] External XHR blocked');
@@ -318,7 +318,7 @@
         return _N.xhrOpen.apply(this, arguments);
     };
 
-    const _sendBeaconImpl = function(url) {
+    const _sendBeaconImpl = function (url) {
         if (_isExternal(String(url ?? ''))) {
             _triggerAlert('sendBeacon to external URL blocked → ' + url);
             return false;
