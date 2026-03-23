@@ -17,15 +17,15 @@ const InitLog = (() => {
     const _S = {
         badge: 'font-size:11px;font-weight:700;color:#1e1e1e;background:#0078d4;padding:1px 6px;border-radius:2px;font-family:Consolas,monospace',
         title: 'font-size:11px;font-weight:700;color:#0078d4;font-family:Consolas,monospace',
-        step:  'font-size:11px;color:#4ec9b0;font-family:Consolas,monospace',
-        lbl:   'font-size:11px;color:#d4d4d4;font-family:Consolas,monospace',
-        done:  'font-size:11px;color:#89d185;font-family:Consolas,monospace',
-        err:   'font-size:11px;font-weight:700;color:#f44747;font-family:Consolas,monospace',
-        dim:   'font-size:11px;color:#858585;font-family:Consolas,monospace',
-        time:  'font-size:11px;color:#ce9178;font-family:Consolas,monospace',
+        step: 'font-size:11px;color:#4ec9b0;font-family:Consolas,monospace',
+        lbl: 'font-size:11px;color:#d4d4d4;font-family:Consolas,monospace',
+        done: 'font-size:11px;color:#89d185;font-family:Consolas,monospace',
+        err: 'font-size:11px;font-weight:700;color:#f44747;font-family:Consolas,monospace',
+        dim: 'font-size:11px;color:#858585;font-family:Consolas,monospace',
+        time: 'font-size:11px;color:#ce9178;font-family:Consolas,monospace',
     };
 
-    function _ts()           { return _t0 != null ? '+' + (performance.now() - _t0).toFixed(1) + 'ms' : ''; }
+    function _ts() { return _t0 != null ? '+' + (performance.now() - _t0).toFixed(1) + 'ms' : ''; }
     function _elapsed(label) { const t = _timers[label]; return t != null ? (performance.now() - t).toFixed(1) + 'ms' : ''; }
 
     function start() {
@@ -40,7 +40,7 @@ const InitLog = (() => {
 
     function done(label, detail) {
         const elapsed = _elapsed(label);
-        const suffix  = detail ? '  · ' + detail : '';
+        const suffix = detail ? '  · ' + detail : '';
         console.log('%c ✓ %c' + label + suffix + ' %c' + elapsed, _S.done, _S.lbl, _S.time);
     }
 

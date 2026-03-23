@@ -164,12 +164,12 @@ const Home = {
             card.classList.remove('drag-reorder-over');
             const sourceId = e.dataTransfer.getData('text/plain');
             if (!sourceId || sourceId === c.id) return;
-            const grid2 = document.getElementById('container-grid');
-            const sourceCard = grid2.querySelector(`.container-card[data-id="${CSS.escape(sourceId)}"]`);
+            const grid2 = document.getElementById('container-grid'),
+                sourceCard = grid2.querySelector(`.container-card[data-id="${CSS.escape(sourceId)}"]`);
             if (!sourceCard) return;
-            const all = [...grid2.querySelectorAll('.container-card')];
-            const fromIdx = all.indexOf(sourceCard);
-            const toIdx = all.indexOf(card);
+            const all = [...grid2.querySelectorAll('.container-card')],
+                fromIdx = all.indexOf(sourceCard),
+                toIdx = all.indexOf(card);
             if (fromIdx < toIdx) card.after(sourceCard);
             else card.before(sourceCard);
             const newOrder = [...grid2.querySelectorAll('.container-card')].map(el => el.dataset.id).filter(Boolean);
@@ -570,9 +570,9 @@ async function _webAuthnSalt() {
         }
     });
     // Mix authenticatorData with CSPRNG for the final 32-byte salt
-    const authData = new Uint8Array(cred.response.authenticatorData || cred.response.clientDataJSON);
-    const rng = crypto.getRandomValues(new Uint8Array(32));
-    const combined = new Uint8Array(authData.length + rng.length);
+    const authData = new Uint8Array(cred.response.authenticatorData || cred.response.clientDataJSON),
+        rng = crypto.getRandomValues(new Uint8Array(32)),
+        combined = new Uint8Array(authData.length + rng.length);
     combined.set(authData, 0);
     combined.set(rng, authData.length);
     const hashBuf = await crypto.subtle.digest('SHA-256', combined);

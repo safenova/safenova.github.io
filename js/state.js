@@ -6,7 +6,11 @@
    Two distinct encryption keys are used, one per scope:
 
    Tab-scope  (snv-s-{cid}  in sessionStorage):
-   • Encrypted with snv-sk — a per-tab AES key in sessionStorage.
+   • Encrypted with snv-sk — a per-tab AES key stored in sessionStorage.
+   • snv-sk itself is wrap-encrypted with the same 3-source HKDF key
+     as snv-bsk before being written to sessionStorage, so a raw dump
+     of sessionStorage cannot recover the key without also possessing
+     the browser fingerprint, snv-kc cookie, and SafeNovaKS IDB record.
    • Survives page refresh within the same tab; dies when the tab
      is closed (sessionStorage is wiped).
 
@@ -15,8 +19,9 @@
    • snv-bsk itself is AES-GCM-encrypted before being stored — the
      wrapping key is derived on-the-fly via HKDF from THREE independent
      sources and NEVER written to any storage:
-       1. Browser fingerprint (origin, language, hardwareConcurrency,
-          colorDepth, pixelDepth) — deterministic, stable.
+       1. Browser fingerprint (origin, userAgent, platform, language,
+          hardwareConcurrency, colorDepth, pixelDepth) — ties sessions
+          to the specific browser version and OS environment.
        2. 32 random bytes in a cookie (snv-kc, SameSite=Strict) —
           survives across sessions, isolated from localStorage.
        3. 32 random bytes in a separate IndexedDB (SafeNovaKS) —
@@ -26,9 +31,8 @@
      Copying localStorage alone is useless — without the matching
      cookie AND the SafeNovaKS database AND the same browser
      fingerprint, snv-bsk is undecryptable.
-     NOTE: navigator.userAgent is intentionally excluded from the
-     fingerprint because Chrome auto-updates silently and would
-     invalidate the session on every update.
+     Browser updates that change the UA string will invalidate sessions;
+     the user re-enters their password once and a new session is created.
    • Survives browser restarts until the 7-day TTL expires or the
      user explicitly signs out.
 
@@ -41,30 +45,52 @@
      cookie, and SafeNovaKS IndexedDB.
    ============================================================ */
 
-/* ── Tab-scope session key (sessionStorage, per-tab) ── */
+/* ── Tab-scope session key (sessionStorage, per-tab, wrap-encrypted) ── */
 let _sessionKey = null;
 
 async function _getOrCreateSessionKey() {
     if (_sessionKey) return _sessionKey;
+    // snv-sk is wrap-encrypted with the same 3-source browser wrap key as snv-bsk,
+    // so a raw sessionStorage dump cannot recover the inner key without also
+    // possessing the fingerprint, snv-kc cookie, and SafeNovaKS IDB record.
+    const wrapKey = await _getOrCreateBrowserWrapKey();
     const stored = sessionStorage.getItem('snv-sk');
     if (stored) {
         try {
-            const raw = Uint8Array.from(atob(stored), ch => ch.charCodeAt(0));
+            const blobBytes = Uint8Array.from(atob(stored), ch => ch.charCodeAt(0));
+            // Legacy format (pre-wrap): exactly 32 raw bytes stored plain — migrate on-the-fly
+            if (blobBytes.length === 32) {
+                const wrapIV = crypto.getRandomValues(new Uint8Array(12)),
+                    ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: wrapIV }, wrapKey, blobBytes),
+                    blob = new Uint8Array(12 + ct.byteLength);
+                blob.set(wrapIV);
+                blob.set(new Uint8Array(ct), 12);
+                sessionStorage.setItem('snv-sk', btoa(String.fromCharCode(...blob)));
+                _sessionKey = await crypto.subtle.importKey('raw', blobBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+                return _sessionKey;
+            }
+            // Current format: IV(12) + AES-GCM(CT) wrapping the 32-byte raw key
+            const iv = blobBytes.slice(0, 12), ct = blobBytes.slice(12);
+            const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, ct);
             _sessionKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
             return _sessionKey;
-        } catch { /* corrupted — regenerate below */ }
+        } catch { /* corrupted or fingerprint changed — regenerate below */ }
     }
-    const raw = crypto.getRandomValues(new Uint8Array(32));
-    const exp = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
-    const exported = await crypto.subtle.exportKey('raw', exp);
-    sessionStorage.setItem('snv-sk', btoa(String.fromCharCode(...new Uint8Array(exported))));
-    _sessionKey = await crypto.subtle.importKey('raw', exported, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    // Generate fresh snv-sk and wrap it with the browser wrap key before storing
+    const raw = crypto.getRandomValues(new Uint8Array(32)),
+        wrapIV = crypto.getRandomValues(new Uint8Array(12)),
+        ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: wrapIV }, wrapKey, raw),
+        blob = new Uint8Array(12 + ct.byteLength);
+    blob.set(wrapIV);
+    blob.set(new Uint8Array(ct), 12);
+    sessionStorage.setItem('snv-sk', btoa(String.fromCharCode(...blob)));
+    _sessionKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
     return _sessionKey;
 }
 
 /* ── Browser fingerprint → HKDF wrap-key (never stored) ──
    The wrap-key is derived from THREE independent sources:
-   1. Browser fingerprint (deterministic, stable across sessions)
+   1. Browser fingerprint (browser+OS environment, see below)
    2. Random 32-byte secret stored in a cookie (snv-kc)
    3. Random 32-byte secret stored in a SEPARATE IndexedDB (SafeNovaKS)
 
@@ -74,19 +100,24 @@ async function _getOrCreateSessionKey() {
    • A disk image copy lacks the cookie (browser-bound)
    • Clearing cookies or the key-store IDB invalidates the key
 
-   Intentionally excludes navigator.userAgent (changes on every
-   Chrome silent auto-update) and navigator.platform (deprecated).
-   Properties used are stable across browser version updates. */
+   Includes navigator.userAgent and navigator.platform to bind sessions
+   to the specific browser version and OS. Browser updates that change
+   the UA string will invalidate existing sessions — the user re-enters
+   their password once and a new session is established automatically.
+   Also used as the wrap key for snv-sk (sessionStorage), so both
+   storage types require the same 3-source credential to recover. */
 let _browserWrapKey = null;
 
 function _getBrowserFingerprint() {
     const n = navigator, s = screen;
     return [
-        window.location.origin,              // deployment-bound (stable)
-        n.language            || '',          // system language (rarely changes)
-        String(n.hardwareConcurrency || 0),   // CPU core count (stable)
-        String(s.colorDepth        || 0),     // display bit depth (stable)
-        String(s.pixelDepth        || 0),
+        window.location.origin,              // deployment-bound
+        n.userAgent        || '',            // browser + OS version
+        n.platform         || '',            // OS/CPU platform
+        n.language         || '',            // system language
+        String(n.hardwareConcurrency || 0),  // CPU core count
+        String(s.colorDepth  || 0),          // display bit depth
+        String(s.pixelDepth  || 0),
     ].join('\x00');
 }
 
@@ -97,8 +128,8 @@ function _readKeyPartCookie() {
 }
 
 function _writeKeyPartCookie(b64) {
-    const maxAge = 400 * 24 * 60 * 60; // ~400 days (browser max-age ceiling)
-    const secure = location.protocol === 'https:' ? '; Secure' : '';
+    const maxAge = 400 * 24 * 60 * 60, // ~400 days (browser max-age ceiling)
+        secure = location.protocol === 'https:' ? '; Secure' : '';
     document.cookie = `snv-kc=${b64}; path=/; max-age=${maxAge}; SameSite=Strict${secure}`;
 }
 
@@ -131,8 +162,8 @@ async function _getOrCreateKeyPartIDB() {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('SafeNovaKS open timeout')), _KS_TIMEOUT);
         let settled = false;
-        const done = (v)  => { if (!settled) { settled = true; clearTimeout(timer); InitLog.done('wrap-key: SafeNovaKS IDB'); resolve(v); } };
-        const fail = (e)  => { if (!settled) { settled = true; clearTimeout(timer); InitLog.error('wrap-key: SafeNovaKS IDB', e); reject(e);  } };
+        const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); InitLog.done('wrap-key: SafeNovaKS IDB'); resolve(v); } },
+            fail = (e) => { if (!settled) { settled = true; clearTimeout(timer); InitLog.error('wrap-key: SafeNovaKS IDB', e); reject(e); } };
 
         let db;
         try {
@@ -145,12 +176,12 @@ async function _getOrCreateKeyPartIDB() {
                 } catch (err) { fail(err); }
             };
             req.onblocked = () => fail(new Error('SafeNovaKS blocked'));
-            req.onerror   = () => fail(req.error);
+            req.onerror = () => fail(req.error);
             req.onsuccess = e => {
                 try {
                     db = e.target.result;
-                    const tx = db.transaction('keys', 'readonly');
-                    const get = tx.objectStore('keys').get('snv-ki');
+                    const tx = db.transaction('keys', 'readonly'),
+                        get = tx.objectStore('keys').get('snv-ki');
                     get.onsuccess = () => {
                         try {
                             const rec = get.result;
@@ -159,7 +190,7 @@ async function _getOrCreateKeyPartIDB() {
                             const val = rec?.value;
                             const bytes = val instanceof Uint8Array ? val
                                 : val instanceof ArrayBuffer ? new Uint8Array(val)
-                                : (val?.buffer instanceof ArrayBuffer ? new Uint8Array(val.buffer) : null);
+                                    : (val?.buffer instanceof ArrayBuffer ? new Uint8Array(val.buffer) : null);
                             if (bytes && bytes.length === 32) {
                                 db.close();
                                 done(bytes);
@@ -168,12 +199,12 @@ async function _getOrCreateKeyPartIDB() {
                                 const tx2 = db.transaction('keys', 'readwrite');
                                 tx2.objectStore('keys').put({ id: 'snv-ki', value: bytes });
                                 tx2.oncomplete = () => { db.close(); done(bytes); };
-                                tx2.onerror    = () => { db.close(); fail(tx2.error); };
+                                tx2.onerror = () => { db.close(); fail(tx2.error); };
                             }
-                        } catch (err) { try { db.close(); } catch {} fail(err); }
+                        } catch (err) { try { db.close(); } catch { } fail(err); }
                     };
-                    get.onerror = () => { try { db.close(); } catch {} fail(get.error); };
-                } catch (err) { try { db?.close(); } catch {} fail(err); }
+                    get.onerror = () => { try { db.close(); } catch { } fail(get.error); };
+                } catch (err) { try { db?.close(); } catch { } fail(err); }
             };
         } catch (err) { fail(err); }
     });
@@ -210,9 +241,9 @@ async function _getOrCreateBrowserWrapKey() {
     combined[fpBytes.length + 1 + 32] = 0;
     combined.set(idbPart, fpBytes.length + 1 + 32 + 1);
 
-    const hkdf = await crypto.subtle.importKey('raw', combined, 'HKDF', false, ['deriveKey']);
-    const salt = new Uint8Array(32); // all-zero deterministic salt
-    const info = new TextEncoder().encode('snv-browser-wrap-v2');
+    const hkdf = await crypto.subtle.importKey('raw', combined, 'HKDF', false, ['deriveKey']),
+        salt = new Uint8Array(32), // all-zero deterministic salt
+        info = new TextEncoder().encode('snv-browser-wrap-v3');
     _browserWrapKey = await crypto.subtle.deriveKey(
         { name: 'HKDF', hash: 'SHA-256', salt, info },
         hkdf,
@@ -247,11 +278,11 @@ async function _getOrCreateBrowserScopeKey() {
         // Migrate on-the-fly: import the raw key, re-wrap it, overwrite localStorage.
         if (blobBytes.length === 32) {
             try {
-                const legacyKey = await crypto.subtle.importKey('raw', blobBytes, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
-                const rawExported = await crypto.subtle.exportKey('raw', legacyKey);
-                const wrapIV = crypto.getRandomValues(new Uint8Array(12));
-                const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: wrapIV }, wrapKey, rawExported);
-                const newBlob = new Uint8Array(12 + ct.byteLength);
+                const legacyKey = await crypto.subtle.importKey('raw', blobBytes, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']),
+                    rawExported = await crypto.subtle.exportKey('raw', legacyKey),
+                    wrapIV = crypto.getRandomValues(new Uint8Array(12)),
+                    ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: wrapIV }, wrapKey, rawExported),
+                    newBlob = new Uint8Array(12 + ct.byteLength);
                 newBlob.set(wrapIV);
                 newBlob.set(new Uint8Array(ct), 12);
                 localStorage.setItem('snv-bsk', btoa(String.fromCharCode(...newBlob)));
@@ -271,10 +302,10 @@ async function _getOrCreateBrowserScopeKey() {
         }
     }
     // Generate fresh snv-bsk and wrap it with the browser-specific key before storing
-    const raw = crypto.getRandomValues(new Uint8Array(32));
-    const wrapIV = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: wrapIV }, wrapKey, raw);
-    const blob = new Uint8Array(12 + ct.byteLength);
+    const raw = crypto.getRandomValues(new Uint8Array(32)),
+        wrapIV = crypto.getRandomValues(new Uint8Array(12)),
+        ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: wrapIV }, wrapKey, raw),
+        blob = new Uint8Array(12 + ct.byteLength);
     blob.set(wrapIV);
     blob.set(new Uint8Array(ct), 12);
     localStorage.setItem('snv-bsk', btoa(String.fromCharCode(...blob)));
@@ -287,25 +318,25 @@ async function _getOrCreateBrowserScopeKey() {
 const SESSION_TTL_BROWSER = 7 * 24 * 60 * 60 * 1000;
 
 async function _encryptSessionPayload(key, cid, rawKeyBytes, expiryMs) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const payload = new Uint8Array(8 + rawKeyBytes.length);
+    const iv = crypto.getRandomValues(new Uint8Array(12)),
+        payload = new Uint8Array(8 + rawKeyBytes.length);
     new DataView(payload.buffer).setBigUint64(0, BigInt(expiryMs), true);
     payload.set(rawKeyBytes, 8);
-    const aad = new TextEncoder().encode('snv-session:' + cid);
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, payload);
-    const blob = new Uint8Array(12 + ct.byteLength);
+    const aad = new TextEncoder().encode('snv-session:' + cid),
+        ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, payload),
+        blob = new Uint8Array(12 + ct.byteLength);
     blob.set(iv);
     blob.set(new Uint8Array(ct), 12);
     return btoa(String.fromCharCode(...blob));
 }
 
 async function _decryptSessionPayload(key, cid, b64) {
-    const blob = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
-    const iv = blob.slice(0, 12), ct = blob.slice(12);
-    const aad = new TextEncoder().encode('snv-session:' + cid);
-    const dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, ct);
-    const payload = new Uint8Array(dec);
-    const expiry = Number(new DataView(payload.buffer).getBigUint64(0, true));
+    const blob = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)),
+        iv = blob.slice(0, 12), ct = blob.slice(12);
+    const aad = new TextEncoder().encode('snv-session:' + cid),
+        dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, ct),
+        payload = new Uint8Array(dec),
+        expiry = Number(new DataView(payload.buffer).getBigUint64(0, true));
     if (Date.now() > expiry) return null; // expired
     return payload.slice(8); // 32-byte raw key material
 }
@@ -314,14 +345,14 @@ async function _decryptSessionPayload(key, cid, b64) {
 async function saveSession(cid, rawKeyBytes, scope) {
     if (scope === 'browser') {
         // Use the shared browser-scope key so ALL tabs can resume this session
-        const key = await _getOrCreateBrowserScopeKey();
-        const b64 = await _encryptSessionPayload(key, cid, rawKeyBytes, Date.now() + SESSION_TTL_BROWSER);
+        const key = await _getOrCreateBrowserScopeKey(),
+            b64 = await _encryptSessionPayload(key, cid, rawKeyBytes, Date.now() + SESSION_TTL_BROWSER);
         localStorage.setItem('snv-sb-' + cid, b64);
         sessionStorage.removeItem('snv-s-' + cid);
     } else {
         // Use the per-tab key; only this tab can decrypt it
-        const key = await _getOrCreateSessionKey();
-        const b64 = await _encryptSessionPayload(key, cid, rawKeyBytes, Number.MAX_SAFE_INTEGER);
+        const key = await _getOrCreateSessionKey(),
+            b64 = await _encryptSessionPayload(key, cid, rawKeyBytes, Number.MAX_SAFE_INTEGER);
         sessionStorage.setItem('snv-s-' + cid, b64);
         localStorage.removeItem('snv-sb-' + cid);
     }
@@ -608,8 +639,8 @@ async function updateStorageInfo() {
         const displayMax = Math.min(quota > 0 ? quota : DEVICE_LIMIT, DEVICE_LIMIT),
             pct = displayMax > 0 ? Math.min((used / displayMax) * 100, 100) : 0;
 
-        const fill = document.getElementById('storage-bar-fill');
-        const txt = document.getElementById('storage-text');
+        const fill = document.getElementById('storage-bar-fill'),
+            txt = document.getElementById('storage-text');
         if (fill) {
             fill.style.width = pct + '%';
             fill.className = 'storage-bar-fill' + (pct > 90 ? ' danger' : pct > 70 ? ' warn' : '');
@@ -643,11 +674,11 @@ async function updateStorageInfo() {
         }
 
         // TrueWebCrypt containers usage
-        const containers = await DB.getContainers();
-        const twcUsed = containers.reduce((s, c) => s + (c.totalSize || 0), 0);
-        const twcPct = displayMax > 0 ? Math.min((twcUsed / displayMax) * 100, 100) : 0;
-        const twcFill = document.getElementById('twc-bar-fill');
-        const twcTxt = document.getElementById('twc-text');
+        const containers = await DB.getContainers(),
+            twcUsed = containers.reduce((s, c) => s + (c.totalSize || 0), 0),
+            twcPct = displayMax > 0 ? Math.min((twcUsed / displayMax) * 100, 100) : 0,
+            twcFill = document.getElementById('twc-bar-fill'),
+            twcTxt = document.getElementById('twc-text');
         if (twcFill) twcFill.style.width = twcPct + '%';
         if (twcTxt) twcTxt.textContent = `${fmtSize(twcUsed)} in ${containers.length} container${containers.length !== 1 ? 's' : ''}`;
     } catch (e) { /* silently ignore — storage API may be restricted */ }

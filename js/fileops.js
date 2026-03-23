@@ -300,7 +300,7 @@ async function deleteSelected() {
                 walk(id);
             }
         }
-        if (allFileIds.length) await DB.deleteFiles(allFileIds).catch(() => {});
+        if (allFileIds.length) await DB.deleteFiles(allFileIds).catch(() => { });
         allFileIds.forEach(fid => { delete App.thumbCache[fid]; });
         const _delSinglePath = ids.length === 1 ? VFS.fullPath(ids[0]) : null;
         for (const id of ids) VFS.remove(id);
@@ -442,7 +442,7 @@ function renameNode(node) {
     if (node.type === 'folder') {
         const blocked = _openFolderGuard([node.id]);
         if (blocked) {
-        toast(`“${node.name}” is open in Explorer — close the window first`, 'error');
+            toast(`“${node.name}” is open in Explorer — close the window first`, 'error');
             return;
         }
     }
@@ -513,7 +513,7 @@ async function pasteItems() {
     if (op === 'cut') {
         const blocked = _openFolderGuard(ids);
         if (blocked) {
-        toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
+            toast(`“${VFS.node(blocked)?.name}” is open in Explorer — close the window first`, 'error');
             // Abort the entire paste operation to prevent partial moves
             return;
         }
@@ -735,17 +735,17 @@ function showProps(node) {
    LINE NUMBER HELPERS
    ============================================================ */
 let _lineNumCanvas = null;
-let _lineNumTimer  = null;
+let _lineNumTimer = null;
 
 function _measureWrappedLineHeights(ta, lines) {
-    const cs  = window.getComputedStyle(ta);
-    const lh  = parseFloat(cs.lineHeight);
+    const cs = window.getComputedStyle(ta);
+    const lh = parseFloat(cs.lineHeight);
     const taW = ta.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     if (taW <= 0) return lines.map(() => lh);
     if (!_lineNumCanvas) _lineNumCanvas = document.createElement('canvas');
-    const ctx     = _lineNumCanvas.getContext('2d');
+    const ctx = _lineNumCanvas.getContext('2d');
     const tabSize = parseInt(cs.tabSize) || 2;
-    const tabStr  = '\u00a0'.repeat(tabSize);
+    const tabStr = '\u00a0'.repeat(tabSize);
     ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
     return lines.map(line => {
         if (!line) return lh;
@@ -756,14 +756,14 @@ function _measureWrappedLineHeights(ta, lines) {
 }
 
 function _updateLineNumbers() {
-    const ta     = document.getElementById('editor-textarea');
+    const ta = document.getElementById('editor-textarea');
     const gutter = document.getElementById('editor-line-numbers');
     if (!gutter || !ta) return;
-    const lines     = ta.value.split('\n');
+    const lines = ta.value.split('\n');
     const isWrapped = ta.classList.contains('word-wrap');
-    const lh        = parseFloat(window.getComputedStyle(ta).lineHeight) || 20.8;
-    const heights   = isWrapped ? _measureWrappedLineHeights(ta, lines) : null;
-    const frag      = document.createDocumentFragment();
+    const lh = parseFloat(window.getComputedStyle(ta).lineHeight) || 20.8;
+    const heights = isWrapped ? _measureWrappedLineHeights(ta, lines) : null;
+    const frag = document.createDocumentFragment();
     for (let i = 0; i < lines.length; i++) {
         const d = document.createElement('div');
         d.textContent = i + 1;
@@ -881,7 +881,7 @@ async function saveEditor() {
 }
 
 function _clearEditorMemory() {
-    const ta     = document.getElementById('editor-textarea');
+    const ta = document.getElementById('editor-textarea');
     const gutter = document.getElementById('editor-line-numbers');
     if (ta) { ta.value = ''; ta.onscroll = null; }
     if (gutter) gutter.innerHTML = '';
@@ -1173,7 +1173,7 @@ async function _readZipFromFile(file) {
     }
     if (eocdOffset < 0) throw new Error('Not a valid ZIP file');
     const cdCount = tailView.getUint16(eocdOffset + 8, true),
-        cdSize  = tailView.getUint32(eocdOffset + 12, true),
+        cdSize = tailView.getUint32(eocdOffset + 12, true),
         cdOffset = tailView.getUint32(eocdOffset + 16, true);
     // Read central directory
     const cdBuf = await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer();
@@ -1572,7 +1572,7 @@ async function importContainerFile(file) {
                 };
                 // Restore encrypted activity log (if present)
                 if (entries['meta/activity_logs/0']) {
-                    try { cObj._alogZ = JSON.parse(new TextDecoder().decode(entries['meta/activity_logs/0'])); } catch {}
+                    try { cObj._alogZ = JSON.parse(new TextDecoder().decode(entries['meta/activity_logs/0'])); } catch { }
                 } else if (entries['meta/activity_log.zlib']) {
                     // Legacy: plain compressed bytes — store raw, will be encrypted on first flush
                     cObj._alogZ = entries['meta/activity_log.zlib'];

@@ -81,8 +81,8 @@ const VFS = (() => {
         if (!_pos[pid]) _pos[pid] = {};
         // Always snap to the current grid so sub-pixel drift and legacy off-grid positions
         // are corrected at write time. Math.round handles both truncation and rounding.
-        const sx = 8 + Math.max(0, Math.round((Math.round(x) - 8) / GRID_X)) * GRID_X;
-        const sy = 8 + Math.max(0, Math.round((Math.round(y) - 8) / GRID_Y)) * GRID_Y;
+        const sx = 8 + Math.max(0, Math.round((Math.round(x) - 8) / GRID_X)) * GRID_X,
+            sy = 8 + Math.max(0, Math.round((Math.round(y) - 8) / GRID_Y)) * GRID_Y;
         _pos[pid][nid] = { x: sx, y: sy };
     }
     function delPos(pid, nid) { if (_pos[pid]) delete _pos[pid][nid]; }
@@ -181,8 +181,8 @@ const VFS = (() => {
         // Build set of occupied grid cells
         const occupied = new Set();
         Object.values(_pos[pid] || {}).forEach(p => {
-            const cx = Math.round((p.x - 8) / GRID_X);
-            const cy = Math.round((p.y - 8) / GRID_Y);
+            const cx = Math.round((p.x - 8) / GRID_X),
+                cy = Math.round((p.y - 8) / GRID_Y);
             occupied.add(`${cx}_${cy}`);
         });
         // Row-by-row scan for first free cell
@@ -220,8 +220,8 @@ const VFS = (() => {
             const map = _pos[pid];
             for (const nid of Object.keys(map)) {
                 const p = map[nid];
-                const cx = Math.round((p.x - 8) / oldGX);
-                const cy = Math.round((p.y - 8) / oldGY);
+                const cx = Math.round((p.x - 8) / oldGX),
+                    cy = Math.round((p.y - 8) / oldGY);
                 map[nid] = { x: 8 + cx * newGX, y: 8 + cy * newGY };
             }
         }
@@ -234,13 +234,13 @@ const VFS = (() => {
         const steps = [];
 
         function step(name, fn, informational = false) {
-            const issues = [], fixed = [];
-            const log = (sev, msg) => issues.push({ sev, msg });
-            const fix = (msg) => fixed.push(msg);
+            const issues = [], fixed = [],
+                log = (sev, msg) => issues.push({ sev, msg }),
+                fix = (msg) => fixed.push(msg);
             fn(log, fix);
-            const hasCrit = issues.some(i => i.sev === 'critical');
-            const status = issues.length === 0 ? 'pass' : hasCrit ? 'fail' : 'warn';
-            const detail = issues.length === 0 ? 'OK' : `${issues.length} issue${issues.length !== 1 ? 's' : ''}${repair && fixed.length ? `, ${fixed.length} fixed` : ''}`;
+            const hasCrit = issues.some(i => i.sev === 'critical'),
+                status = issues.length === 0 ? 'pass' : hasCrit ? 'fail' : 'warn',
+                detail = issues.length === 0 ? 'OK' : `${issues.length} issue${issues.length !== 1 ? 's' : ''}${repair && fixed.length ? `, ${fixed.length} fixed` : ''}`;
             steps.push({ name, status, detail, issues, fixed, informational });
         }
 
@@ -285,8 +285,8 @@ const VFS = (() => {
                     if (repair) { n.type = 'file'; fix(`Set type to file for "${id}"`); }
                 }
                 if (id !== 'root') {
-                    const badCtime = !n.ctime || typeof n.ctime !== 'number' || n.ctime <= 0 || !isFinite(n.ctime);
-                    const badMtime = !n.mtime || typeof n.mtime !== 'number' || n.mtime <= 0 || !isFinite(n.mtime);
+                    const badCtime = !n.ctime || typeof n.ctime !== 'number' || n.ctime <= 0 || !isFinite(n.ctime),
+                        badMtime = !n.mtime || typeof n.mtime !== 'number' || n.mtime <= 0 || !isFinite(n.mtime);
                     if (badCtime) {
                         log('warn', `"${n.name || id}": missing or invalid ctime`);
                         if (repair) { n.ctime = _now; fix(`Restored ctime for "${n.name || id}"`); }
@@ -301,8 +301,8 @@ const VFS = (() => {
 
         // 3. Node ID format validation
         step('Node ID format validation', (log, fix) => {
-            const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            const fallbackRe = /^[0-9a-z]{6,20}$/i;
+            const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+                fallbackRe = /^[0-9a-z]{6,20}$/i;
             let badCount = 0;
             for (const id of allIds) {
                 if (id === 'root') continue;
@@ -697,8 +697,8 @@ const VFS = (() => {
             for (const pid of Object.keys(_pos)) {
                 for (const nid of Object.keys(_pos[pid] || {})) {
                     const p = _pos[pid][nid];
-                    const sx = 8 + Math.max(0, Math.round((p.x - 8) / GRID_X)) * GRID_X;
-                    const sy = 8 + Math.max(0, Math.round((p.y - 8) / GRID_Y)) * GRID_Y;
+                    const sx = 8 + Math.max(0, Math.round((p.x - 8) / GRID_X)) * GRID_X,
+                        sy = 8 + Math.max(0, Math.round((p.y - 8) / GRID_Y)) * GRID_Y;
                     if (p.x !== sx || p.y !== sy) {
                         log('warn', `"${_nodes[nid]?.name || nid}" is off-grid (${p.x},${p.y})`);
                         if (repair) { _pos[pid][nid] = { x: sx, y: sy }; fix(`Snapped "${_nodes[nid]?.name || nid}" to grid`); }
@@ -728,9 +728,9 @@ const VFS = (() => {
 
         // 21. Node count & summary stats
         step('Node count summary', (log) => {
-            const files = allIds.filter(id => _nodes[id]?.type === 'file').length;
-            const folders = allIds.filter(id => _nodes[id]?.type === 'folder').length - 1;
-            const posEntries = Object.values(_pos).reduce((s, m) => s + Object.keys(m).length, 0);
+            const files = allIds.filter(id => _nodes[id]?.type === 'file').length,
+                folders = allIds.filter(id => _nodes[id]?.type === 'folder').length - 1,
+                posEntries = Object.values(_pos).reduce((s, m) => s + Object.keys(m).length, 0);
             log('info', `${files} file${files !== 1 ? 's' : ''}, ${folders} folder${folders !== 1 ? 's' : ''}, ${posEntries} position entries`);
         });
 
@@ -816,9 +816,9 @@ const VFS = (() => {
         function uniqueName(pid, name) {
             const names = getNames(pid);
             if (!names.has(name.toLowerCase())) { names.add(name.toLowerCase()); return name; }
-            const dot = name.lastIndexOf('.');
-            const base = dot >= 0 ? name.slice(0, dot) : name;
-            const ext = dot >= 0 ? name.slice(dot) : '';
+            const dot = name.lastIndexOf('.'),
+                base = dot >= 0 ? name.slice(0, dot) : name,
+                ext = dot >= 0 ? name.slice(dot) : '';
             let i = 1;
             while (names.has(`${base} (${i})${ext}`.toLowerCase())) i++;
             const result = `${base} (${i})${ext}`;
@@ -845,8 +845,8 @@ const VFS = (() => {
             // Update position maps
             if (_pos[oldPid]) delete _pos[oldPid][id];
             if (!_pos[targetPid]) _pos[targetPid] = {};
-            const posIdx = Object.keys(_pos[targetPid]).length;
-            const cols = Math.max(1, Math.floor((800 - 16) / GRID_X));
+            const posIdx = Object.keys(_pos[targetPid]).length,
+                cols = Math.max(1, Math.floor((800 - 16) / GRID_X));
             _pos[targetPid][id] = { x: 8 + (posIdx % cols) * GRID_X, y: 8 + Math.floor(posIdx / cols) * GRID_Y };
         }
 

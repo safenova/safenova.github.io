@@ -45,8 +45,8 @@ const _TAB_ID = (() => {
 
 function fmtSize(b) {
     if (b === 0) return '0 B';
-    const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.min(Math.floor(Math.log(b) / Math.log(k)), s.length - 1);
+    const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'],
+        i = Math.min(Math.floor(Math.log(b) / Math.log(k)), s.length - 1);
     return (b / Math.pow(k, i)).toFixed(i > 0 ? 1 : 0) + ' ' + s[i];
 }
 
@@ -84,8 +84,8 @@ function getMime(name) {
         ppt: 'application/vnd.ms-powerpoint',
         pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf',
-        arj:  'application/x-arj', dbf: 'application/x-dbf',
-        so:  'application/x-sharedlib'
+        arj: 'application/x-arj', dbf: 'application/x-dbf',
+        so: 'application/x-sharedlib'
     })[e] || 'application/octet-stream';
 }
 
@@ -99,8 +99,8 @@ function isVideo(mime) { return mime.startsWith('video/'); }
 function isPDF(mime) { return mime === 'application/pdf'; }
 
 function buf2b64(buf) {
-    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-    const CHUNK = 8192;
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf),
+        CHUNK = 8192;
     let s = '';
     for (let i = 0; i < u8.length; i += CHUNK)
         s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CHUNK, u8.length)));
@@ -129,7 +129,7 @@ function escHtml(str) {
 }
 
 /* Shared error/cooldown SVG fragments reused across all password forms */
-const _ERR_SVG  = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM7.25 5h1.5v4h-1.5V5zm0 5h1.5v1.5h-1.5V10z" fill="currentColor"/></svg>';
+const _ERR_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM7.25 5h1.5v4h-1.5V5zm0 5h1.5v1.5h-1.5V10z" fill="currentColor"/></svg>';
 const _WAIT_SVG = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
 
 /* Shared brute-force cooldown — disables btn and shows 3-second countdown in errEl */
