@@ -15,6 +15,7 @@
     <link rel="icon" href="favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="favicon.png">
     <script src="js/docmode.js"></script>
+    <script src="js/daemon.js"></script>
     <link rel="stylesheet" href="css/app.css">
 </head>
 
@@ -1106,6 +1107,7 @@
     <div id="toast-container"></div>
 
     <!-- ==================== SCRIPTS (dependency order) ==================== -->
+    <!-- daemon.js already loaded in <head> — runs before any other module -->
     <script src="js/argon2.umd.min.js"></script>
     <script src="js/initlog.js"></script>
     <script src="js/constants.js"></script>

@@ -286,6 +286,29 @@ function initEvents() {
    BOOT
    ============================================================ */
 window.addEventListener('DOMContentLoaded', async () => {
+    // SafeNova Proactive must be loaded and active before the app starts.
+    // daemon.js is injected in <head> before all other scripts; if it
+    // failed to load for any reason the guard token will be absent.
+    if (!window.__snvGuard?.active) {
+        const ol = document.getElementById('loading-overlay');
+        if (ol) {
+            ol.innerHTML = `
+              <div style="text-align:center;max-width:380px;padding:0 24px">
+                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" style="color:#f44747;margin-bottom:16px" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                  <path d="M12 8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  <circle cx="12" cy="16" r="1" fill="currentColor"/>
+                </svg>
+                <div style="color:var(--text);font-size:16px;font-weight:600;margin-bottom:8px">SafeNova Proactive failed to initialize</div>
+                <div style="color:var(--text-dim);font-size:13px;line-height:1.7">
+                  The runtime protection module did not load.<br>
+                  The application cannot start without it.
+                </div>
+              </div>`;
+            ol.style.cssText += 'display:flex;opacity:1;pointer-events:all;';
+        }
+        return;
+    }
     InitLog.start();
     InitLog.step('initEvents');
     initEvents();
