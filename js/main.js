@@ -199,8 +199,12 @@ function initEvents() {
     document.getElementById('cp-ok').addEventListener('click', doChangePassword);
     document.getElementById('cp-old-eye').addEventListener('click', () => togglePwEye('cp-old', 'cp-old-eye'));
     document.getElementById('cp-new-eye').addEventListener('click', () => togglePwEye('cp-new', 'cp-new-eye'));
-    document.getElementById('cp-new2-eye').addEventListener('click', () => togglePwEye('cp-new2', 'cp-new2-eye'));
     document.getElementById('cp-new').addEventListener('input', e => updatePwStrength(e.target.value, 'cp-pw-strength', 'cp-pw-strength-label'));
+
+    /* ---- Duress password eyes ---- */
+    document.getElementById('duress-pw-eye').innerHTML = Icons.eye;
+    document.getElementById('duress-pw-eye').addEventListener('click', () => togglePwEye('duress-pw', 'duress-pw-eye'));
+
     document.getElementById('cp-old').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-new').focus(); });
     document.getElementById('cp-new').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-new2').focus(); });
     document.getElementById('cp-new2').addEventListener('keydown', e => { if (e.key === 'Enter') doChangePassword(); });

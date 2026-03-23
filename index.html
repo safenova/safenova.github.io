@@ -53,12 +53,12 @@
 
         <div class="home-body">
             <div class="home-warning-box hidden" id="home-warning-box">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-top:2px">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M8 1.5L1 14.5h14z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
                     <line x1="8" y1="6.5" x2="8" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
                     <circle cx="8" cy="12.5" r="0.85" fill="currentColor" />
                 </svg>
-                <div style="flex:1">
+                <div>
                     <strong>All files are stored directly in your browser</strong> and are never sent to any server.
                     Clearing site data, reinstalling the browser, or using a different browser/device will
                     <strong>permanently erase all containers and files</strong>. Use the Export function to back up your data.
@@ -141,7 +141,7 @@
             <div class="storage-row">
                 <span class="storage-label">SafeNova</span>
                 <div class="storage-bar-wrap">
-                    <div class="storage-bar-fill" id="twc-bar-fill" style="width:0%;background:var(--purple)"></div>
+                    <div class="storage-bar-fill" id="twc-bar-fill" style="width:0%"></div>
                 </div>
                 <span class="storage-text" id="twc-text">-</span>
             </div>
@@ -189,7 +189,7 @@
                     <input type="checkbox" id="unlock-remember">
                     <span>Remember password</span>
                 </label>
-                <div class="remember-opts" id="remember-opts" style="display:flex">
+                <div class="remember-opts" id="remember-opts">
                     <label class="remember-opt disabled">
                         <input type="radio" name="remember-scope" id="remember-tab" value="tab" checked disabled>
                         <span>Current tab session <span class="remember-opt-badge">Recommended</span></span>
@@ -207,7 +207,7 @@
                 </svg>
                 Unlock Container
             </button>
-            <div style="text-align:center;font-size:11px;color:var(--text-dim);margin-top:4px">
+            <div class="unlock-crypto-info">
                 AES-256-GCM &middot; Argon2id
             </div>
         </div>
@@ -318,7 +318,7 @@
                 </div>
                 <span id="taskbar-size-pct">0%</span>
             </div>
-            <button class="btn btn-danger btn-sm" id="btn-lock-taskbar" style="margin-left:8px">
+            <button class="btn btn-danger btn-sm" id="btn-lock-taskbar">
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect x="1" y="5" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.4" />
                     <path d="M3 5V4a3 3 0 016 0v1" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" />
@@ -329,8 +329,8 @@
     </div>
 
     <!-- Hidden file inputs -->
-    <input type="file" id="file-input" multiple style="display:none">
-    <input type="file" id="import-container-input" accept=".safenova,.zip,.twc" style="display:none">
+    <input type="file" id="file-input" multiple>
+    <input type="file" id="import-container-input" accept=".safenova,.zip,.twc">
 
     <!-- ==================== CONTEXT MENU ==================== -->
     <div class="ctx-menu" id="ctx-menu"></div>
@@ -339,7 +339,7 @@
     <div class="modal-overlay" id="modal-overlay">
 
         <!-- New Container Modal -->
-        <div class="modal" id="modal-new-container" style="display:none;min-width:420px">
+        <div class="modal" id="modal-new-container" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Create New Container</span>
                 <button class="modal-close" id="modal-nc-close">
@@ -372,24 +372,24 @@
                     <input type="password" class="input" id="nc-pw2" placeholder="Repeat password">
                 </div>
                 <div class="notice-box warn">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-top:1px">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M7 1L1 13h12z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
                         <path d="M7 5v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
                         <circle cx="7" cy="10.5" r="0.7" fill="currentColor" />
                     </svg>
                     <span>The password <strong>cannot be recovered</strong>. If lost, all data in this container will be permanently inaccessible.</span>
                 </div>
-                <div class="notice-box danger" style="margin-top:10px">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-top:1px">
+                <div class="notice-box danger">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.3" />
                         <path d="M7 4v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
                         <circle cx="7" cy="10" r="0.7" fill="currentColor" />
                     </svg>
                     <span><strong>SafeNova has no access to your data and takes no responsibility for data loss.</strong> All containers are stored exclusively in your browser.<br>Clearing browser data or switching devices will permanently destroy all files without the ability to recover them.</span>
                 </div>
-                <label style="display:flex;align-items:center;gap:9px;margin-top:10px;cursor:pointer;user-select:none">
-                    <input type="checkbox" id="nc-agree" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex-shrink:0">
-                    <span style="font-size:12px;color:var(--text-dim);line-height:1.4">I understand that I am solely responsible for my data</span>
+                <label class="agree-label">
+                    <input type="checkbox" id="nc-agree" class="agree-cb">
+                    <span class="agree-text">I understand that I am solely responsible for my data</span>
                 </label>
             </div>
             <div class="modal-footer">
@@ -416,7 +416,7 @@
         <div class="modal modal-editor" id="modal-editor" style="display:none">
             <div class="modal-header">
                 <span class="modal-title" id="editor-title">Text Editor</span>
-                <div style="display:flex;gap:6px;align-items:center">
+                <div class="modal-header-actions">
                     <span class="badge encrypted">AES-256</span>
                     <button class="btn btn-ghost btn-sm" id="btn-wordwrap" title="Toggle Word Wrap">
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -447,14 +447,14 @@
             <div class="editor-meta">
                 <span id="editor-meta-chars">0 chars</span>
                 <span id="editor-meta-lines">0 lines</span>
-                <span id="editor-meta-modified" style="color:var(--orange);display:none">Modified</span>
+                <span id="editor-meta-modified" style="display:none">Modified</span>
             </div>
             <!-- Unsaved changes inline confirmation -->
-            <div id="editor-unsaved-dialog" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.58);z-index:20;align-items:center;justify-content:center">
-                <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:24px;min-width:300px;max-width:90%;display:flex;flex-direction:column;gap:16px;box-shadow:var(--shadow)">
-                    <div style="font-size:14px;font-weight:600;color:var(--text-bright)">Unsaved Changes</div>
-                    <div style="font-size:13px;color:var(--text-dim);line-height:1.5">You have unsaved changes. What would you like to do?</div>
-                    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+            <div id="editor-unsaved-dialog" class="unsaved-overlay" style="display:none">
+                <div class="unsaved-dialog">
+                    <div class="unsaved-title">Unsaved Changes</div>
+                    <div class="unsaved-msg">You have unsaved changes. What would you like to do?</div>
+                    <div class="unsaved-actions">
                         <button class="btn" id="editor-unsaved-cancel">Cancel</button>
                         <button class="btn btn-danger" id="editor-unsaved-discard">Don't Save</button>
                         <button class="btn btn-primary" id="editor-unsaved-save">Save &amp; Close</button>
@@ -467,7 +467,7 @@
         <div class="modal modal-viewer" id="modal-viewer" style="display:none">
             <div class="modal-header">
                 <span class="modal-title" id="viewer-title">File Viewer</span>
-                <div style="display:flex;gap:6px;align-items:center">
+                <div class="modal-header-actions">
                     <button class="btn btn-ghost btn-sm" id="btn-download-viewer">
                         <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M6.5 1v8M3 6l3.5 4 3.5-4M1 12h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" />
@@ -501,7 +501,7 @@
         </div>
 
         <!-- Rename Modal -->
-        <div class="modal" id="modal-rename" style="display:none;min-width:340px">
+        <div class="modal" id="modal-rename" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Rename</span>
                 <button class="modal-close" id="rename-close">
@@ -523,9 +523,9 @@
         </div>
 
         <!-- Delete Confirm Modal -->
-        <div class="modal" id="modal-delete" style="display:none;min-width:340px">
+        <div class="modal" id="modal-delete" style="display:none">
             <div class="modal-header">
-                <span class="modal-title" style="color:var(--red)">Confirm Delete</span>
+                <span class="modal-title modal-title-danger">Confirm Delete</span>
                 <button class="modal-close" id="delete-close">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" />
@@ -533,7 +533,7 @@
                 </button>
             </div>
             <div class="modal-body">
-                <p id="delete-msg" style="font-size:13px;line-height:1.6"></p>
+                <p id="delete-msg" class="modal-text"></p>
             </div>
             <div class="modal-footer">
                 <button class="btn" id="delete-cancel">Cancel</button>
@@ -547,15 +547,15 @@
         </div>
 
         <!-- Session Conflict Modal -->
-        <div class="modal" id="modal-session-conflict" style="display:none;min-width:380px">
+        <div class="modal" id="modal-session-conflict" style="display:none">
             <div class="modal-header">
-                <span class="modal-title" style="color:var(--orange)">Container Already Open</span>
+                <span class="modal-title modal-title-warn">Container Already Open</span>
             </div>
-            <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-                <p style="font-size:13px;line-height:1.6">
+            <div class="modal-body">
+                <p class="modal-text">
                     <strong id="sc-cont-name"></strong> is currently open in another tab or window.
                 </p>
-                <p style="font-size:12px;color:var(--text-dim);line-height:1.6">
+                <p class="modal-secondary">
                     Opening it here will immediately lock the other session. Any unsaved state in that tab will be lost.
                 </p>
             </div>
@@ -566,12 +566,12 @@
         </div>
 
         <!-- Disable Activity Logs Confirm Modal -->
-        <div class="modal" id="modal-alog-disable" style="display:none;min-width:320px">
+        <div class="modal" id="modal-alog-disable" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Disable Activity Logs?</span>
             </div>
             <div class="modal-body">
-                <p style="font-size:13px;line-height:1.6;color:var(--text-dim)">All recorded activity history will be permanently cleared. Are you sure?</p>
+                <p class="modal-text-dim">All recorded activity history will be permanently cleared. Are you sure?</p>
             </div>
             <div class="modal-footer">
                 <button class="btn" id="alog-disable-cancel">Cancel</button>
@@ -580,12 +580,12 @@
         </div>
 
         <!-- Clear Activity Logs Confirm Modal -->
-        <div class="modal" id="modal-alog-clear" style="display:none;min-width:320px">
+        <div class="modal" id="modal-alog-clear" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Clear Activity Logs?</span>
             </div>
             <div class="modal-body">
-                <p style="font-size:13px;line-height:1.6;color:var(--text-dim)">All recorded activity history will be permanently cleared. Are you sure?</p>
+                <p class="modal-text-dim">All recorded activity history will be permanently cleared. Are you sure?</p>
             </div>
             <div class="modal-footer">
                 <button class="btn" id="alog-clear-cancel">Cancel</button>
@@ -593,8 +593,10 @@
             </div>
         </div>
 
+
+
         <!-- New Text File Modal -->
-        <div class="modal" id="modal-new-text" style="display:none;min-width:340px">
+        <div class="modal" id="modal-new-text" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">New Text File</span>
                 <button class="modal-close" id="nf-close">
@@ -616,7 +618,7 @@
         </div>
 
         <!-- New Folder Modal -->
-        <div class="modal" id="modal-new-folder" style="display:none;min-width:340px">
+        <div class="modal" id="modal-new-folder" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">New Folder</span>
                 <button class="modal-close" id="nd-close">
@@ -638,9 +640,9 @@
         </div>
 
         <!-- Delete Container Confirm -->
-        <div class="modal" id="modal-del-container" style="display:none;min-width:420px">
+        <div class="modal" id="modal-del-container" style="display:none">
             <div class="modal-header">
-                <span class="modal-title" style="color:var(--red)">Delete Container</span>
+                <span class="modal-title modal-title-danger">Delete Container</span>
                 <button class="modal-close" id="dc-close">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" />
@@ -655,11 +657,11 @@
                         <circle cx="14" cy="20.5" r="1.2" fill="var(--red)" />
                     </svg>
                     <div>
-                        <div style="font-weight:700;font-size:14px;color:var(--red);margin-bottom:4px">This action is irreversible!</div>
-                        <div style="font-size:12px;color:var(--text-dim);line-height:1.5">All files inside container <strong id="dc-name" style="color:var(--text)"></strong> will be permanently erased. There is no recovery.</div>
+                        <div class="dc-warn-title">This action is irreversible!</div>
+                        <div class="dc-warn-text">All files inside container <strong id="dc-name"></strong> will be permanently erased. There is no recovery.</div>
                     </div>
                 </div>
-                <p style="font-size:13px;line-height:1.6;margin-top:8px" id="dc-msg"></p>
+                <p id="dc-msg"></p>
             </div>
             <div class="modal-footer">
                 <button class="btn" id="dc-cancel">Cancel</button>
@@ -673,7 +675,7 @@
         </div>
 
         <!-- ==================== CHANGE PASSWORD MODAL ==================== -->
-        <div class="modal" id="modal-change-pw" style="display:none;min-width:420px">
+        <div class="modal" id="modal-change-pw" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Change Password</span>
                 <button class="modal-close" id="cp-close">
@@ -711,18 +713,10 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">Confirm New Password</label>
-                    <div class="input-wrap">
-                        <input type="password" class="input" id="cp-new2" placeholder="Repeat new password" autocomplete="new-password">
-                        <button class="input-eye" id="cp-new2-eye" tabindex="-1">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.5" />
-                                <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5" />
-                            </svg>
-                        </button>
-                    </div>
+                    <input type="password" class="input" id="cp-new2" placeholder="Repeat new password" autocomplete="new-password">
                 </div>
                 <div class="notice-box warn">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-top:1px">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M7 1L1 13h12z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
                         <path d="M7 5v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
                         <circle cx="7" cy="10.5" r="0.7" fill="currentColor" />
@@ -738,7 +732,7 @@
         </div>
 
         <!-- ==================== RENAME CONTAINER MODAL ==================== -->
-        <div class="modal" id="modal-rename-container" style="display:none;min-width:420px">
+        <div class="modal" id="modal-rename-container" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Rename Container</span>
                 <button class="modal-close" id="rc-close">
@@ -761,7 +755,7 @@
         </div>
 
         <!-- ==================== EXPORT CONFIRM MODAL ==================== -->
-        <div class="modal" id="modal-export-confirm" style="display:none;min-width:340px">
+        <div class="modal" id="modal-export-confirm" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Cannot Preview File</span>
                 <button class="modal-close" id="ec-close">
@@ -771,9 +765,9 @@
                 </button>
             </div>
             <div class="modal-body">
-                <p style="font-size:13px;line-height:1.6">This file type cannot be opened in the browser.</p>
-                <div class="notice-box" style="margin-top:8px">
-                    <span id="ec-filename" style="font-weight:600"></span> — export this file to your computer?
+                <p class="modal-text">This file type cannot be opened in the browser.</p>
+                <div class="notice-box">
+                    <span id="ec-filename"></span> — export this file to your computer?
                 </div>
             </div>
             <div class="modal-footer">
@@ -788,17 +782,17 @@
         </div>
 
         <!-- ==================== EXPORT PASSWORD MODAL ==================== -->
-        <div class="modal modal-export-pw" id="modal-export-pw" style="display:none;width:400px;min-width:360px;max-width:400px">
+        <div class="modal modal-export-pw" id="modal-export-pw" style="display:none">
             <div class="modal-header">
-                <div style="display:flex;align-items:center;gap:10px">
-                    <div style="width:32px;height:32px;border-radius:8px;background:rgba(0,120,212,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:var(--accent)">
+                <div class="exp-header">
+                    <div class="exp-icon">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M8 10V2M4 5l4-4 4 4M2 13h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" />
                         </svg>
                     </div>
                     <div>
                         <div class="modal-title">Export Container</div>
-                        <div style="font-size:11px;color:var(--text-dim);margin-top:1px">Confirm your identity to export</div>
+                        <div class="exp-subtitle">Confirm your identity to export</div>
                     </div>
                 </div>
                 <button class="modal-close" id="exp-close">
@@ -807,23 +801,23 @@
                     </svg>
                 </button>
             </div>
-            <div class="modal-body" style="gap:12px">
-                <div class="notice-box" style="border-left-color:var(--accent)">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="color:var(--accent);flex-shrink:0;margin-top:1px">
+            <div class="modal-body">
+                <div class="notice-box accent">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                         <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM7.25 5h1.5v4h-1.5V5zm0 5h1.5v1.5h-1.5V10z" fill="currentColor" />
                     </svg>
-                    <span>Container <strong id="exp-cont-name"></strong> will be exported as a <code style="background:var(--bg4);padding:1px 4px;border-radius:3px;font-size:11px">.safenova</code> file. Enter the password to authorize the export.</span>
+                    <span>Container <strong id="exp-cont-name"></strong> will be exported as a <code class="code-tag">.safenova</code> file. Enter the password to authorize the export.</span>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Container Password</label>
-                    <div class="input-wrap" style="position:relative">
-                        <input type="password" class="input" id="exp-pw" placeholder="Enter password…" autocomplete="current-password" style="padding-right:38px">
+                    <div class="input-wrap">
+                        <input type="password" class="input" id="exp-pw" placeholder="Enter password…" autocomplete="current-password">
                         <button class="input-eye" type="button" id="exp-eye" aria-label="Show password" tabindex="-1">
                             <svg class="eye-open" width="15" height="15" viewBox="0 0 15 15" fill="none">
                                 <path d="M7.5 3C4.5 3 2 7.5 2 7.5S4.5 12 7.5 12 13 7.5 13 7.5 10.5 3 7.5 3z" stroke="currentColor" stroke-width="1.3" />
                                 <circle cx="7.5" cy="7.5" r="1.8" stroke="currentColor" stroke-width="1.3" />
                             </svg>
-                            <svg class="eye-closed" width="15" height="15" viewBox="0 0 15 15" fill="none" style="display:none">
+                            <svg class="eye-closed" width="15" height="15" viewBox="0 0 15 15" fill="none">
                                 <path d="M2 2l11 11M6.5 5.5A3 3 0 0112 7.5M3 7.5C4 9.5 5.6 11 7.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="square" />
                             </svg>
                         </button>
@@ -831,15 +825,15 @@
                 </div>
                 <div class="unlock-error" id="exp-error"></div>
             </div>
-            <div class="modal-footer" style="justify-content:space-between;align-items:center">
-                <span style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:5px">
+            <div class="modal-footer modal-footer-split">
+                <span class="encrypt-label">
                     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
                         <rect x="1" y="5" width="10" height="6" rx="1" stroke="currentColor" stroke-width="1.2" />
                         <path d="M3.5 5V3.5a2.5 2.5 0 015 0V5" stroke="currentColor" stroke-width="1.2" stroke-linecap="square" />
                     </svg>
                     AES-256-GCM encrypted
                 </span>
-                <div style="display:flex;gap:8px">
+                <div class="modal-actions">
                     <button class="btn" id="exp-cancel">Cancel</button>
                     <button class="btn btn-primary" id="exp-ok">
                         <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
@@ -852,7 +846,7 @@
         </div>
 
         <!-- ==================== IMPORT PASSWORD MODAL ==================== -->
-        <div class="modal" id="modal-import-pw" style="display:none;min-width:380px">
+        <div class="modal" id="modal-import-pw" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Import Container</span>
                 <button class="modal-close" id="imp-close">
@@ -862,7 +856,7 @@
                 </button>
             </div>
             <div class="modal-body">
-                <p style="font-size:13px;line-height:1.6;margin-bottom:8px">Container <strong id="imp-name"></strong> has an encrypted file manifest. Enter the password to complete the import.</p>
+                <p class="modal-text">Container <strong id="imp-name"></strong> has an encrypted file manifest. Enter the password to complete the import.</p>
                 <div class="form-group">
                     <label class="form-label">Password</label>
                     <input type="password" class="input" id="imp-pw" placeholder="Container password">
@@ -876,7 +870,7 @@
         </div>
 
         <!-- ==================== SETTINGS MODAL ==================== -->
-        <div class="modal modal-settings" id="modal-settings" style="display:none;min-width:520px;max-width:620px">
+        <div class="modal modal-settings" id="modal-settings" style="display:none">
             <div class="modal-header">
                 <span class="modal-title">Environment</span>
                 <button class="modal-close" id="settings-close">
@@ -890,7 +884,7 @@
                 <button class="settings-tab" data-tab="statistics">Statistics</button>
                 <button class="settings-tab" data-tab="activity-logs">Activity Logs</button>
             </div>
-            <div class="modal-body" style="padding:0">
+            <div class="modal-body">
                 <!-- Personalization Tab -->
                 <div class="settings-panel" id="settings-personalization">
                     <div class="settings-section">
@@ -938,7 +932,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="settings-section" style="margin-top:4px;">
+                    <div class="settings-section">
                         <div class="settings-section-title">Personalization</div>
                         <div class="settings-row">
                             <span class="settings-label">Icon size</span>
@@ -970,8 +964,11 @@
                             </label>
                         </div>
                     </div>
-                    <div class="settings-section" style="margin-top:4px;">
+                    <div class="settings-section">
                         <div class="settings-section-title">Diagnostics</div>
+                        <div class="settings-desc">
+                            Run a full integrity scan of the container's virtual file system and database records. Detects orphaned nodes, broken parent references, duplicate names, missing blobs, and other structural issues — with one-click auto-repair.
+                        </div>
                         <div class="settings-row">
                             <span class="settings-label">Container integrity</span>
                             <button class="btn" id="fs-check-open">
@@ -983,22 +980,70 @@
                             </button>
                         </div>
                     </div>
+                    <div class="settings-section danger-zone-section">
+                        <div class="settings-section-title danger-zone-title">Danger Zone</div>
+                        <div class="danger-zone-body">
+                            <div class="danger-zone-header">
+                                <div>
+                                    <div class="danger-zone-label">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                            <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                                            <path d="M12 8v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                            <circle cx="12" cy="15.5" r="0.75" fill="currentColor"/>
+                                        </svg>
+                                        Duress password
+                                    </div>
+                                    <div class="danger-zone-desc">
+                                        A secondary password entered under coercion. When used anywhere — unlock, change password, or export — it behaves <strong>exactly like an incorrect password</strong>, but silently and <strong>irreversibly destroys</strong> every encrypted file in the background. The real password still works afterward, but all data inside is already gone — indistinguishable from storage corruption.
+                                    </div>
+                                </div>
+                                <label class="switch danger-zone-switch">
+                                    <input type="checkbox" id="settings-duress-cb">
+                                    <span class="switch-slider switch-slider-danger"></span>
+                                </label>
+                            </div>
+                            <div id="duress-form">
+                                <div class="form-group duress-fg">
+                                    <label class="form-label duress-fl">Duress Password <span class="duress-hint">(min. 4 characters)</span></label>
+                                    <div class="input-wrap">
+                                        <input type="password" class="input" id="duress-pw" placeholder="Enter duress password" autocomplete="new-password">
+                                        <button class="input-eye" id="duress-pw-eye" tabindex="-1"></button>
+                                    </div>
+                                    <div class="pw-strength" id="duress-pw-strength"></div>
+                                    <div class="pw-strength-row" id="duress-pw-strength-label"></div>
+                                </div>
+                                <div class="form-group duress-fg">
+                                    <label class="form-label duress-fl">Confirm</label>
+                                    <input type="password" class="input" id="duress-pw2" placeholder="Repeat duress password" autocomplete="new-password">
+                                </div>
+                                <div class="duress-set-error" id="duress-set-error"></div>
+                                <button class="btn btn-danger duress-set-btn" id="duress-set-ok">Set Duress Password</button>
+                            </div>
+                            <div id="duress-active-info" class="duress-active-info">
+                                <div class="duress-active-badge">
+                                    <span class="duress-active-dot"></span>
+                                    Active — entering this password will silently destroy all files
+                                </div>
+                                <button class="btn btn-danger duress-remove-btn" id="duress-remove-btn">Remove Duress Password</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <!-- Statistics Tab -->
                 <div class="settings-panel" id="settings-statistics" style="display:none">
                     <div class="settings-section">
                         <div class="stats-grid" id="stats-grid"></div>
                         <div class="stats-chart-wrap">
-                            <span class="settings-label" style="margin-bottom:8px;display:block">File Types</span>
+                            <span class="settings-label settings-label-block">File Types</span>
                             <div class="stats-bar-chart" id="stats-bar-chart"></div>
                         </div>
                         <div class="stats-chart-wrap">
-                            <span class="settings-label" style="margin-bottom:8px;display:block">Storage Usage</span>
+                            <span class="settings-label settings-label-block">Storage Usage</span>
                             <div class="stats-storage-bar" id="stats-storage-bar"></div>
                             <div class="stats-storage-labels" id="stats-storage-labels"></div>
                         </div>
                         <div class="stats-chart-wrap">
-                            <span class="settings-label" style="margin-bottom:8px;display:block">Largest Files</span>
+                            <span class="settings-label settings-label-block">Largest Files</span>
                             <div class="stats-top-files" id="stats-top-files"></div>
                         </div>
                     </div>
@@ -1016,14 +1061,14 @@
                         </button>
                     </div>
                     <div class="alog-off" id="alog-off" style="display:none">
-                        <svg width="28" height="28" viewBox="0 0 16 16" fill="none" style="opacity:.45">
+                        <svg width="28" height="28" viewBox="0 0 16 16" fill="none">
                             <path d="M4 3v10M2 5l2-2 2 2M12 13V3M10 11l2 2 2-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <span class="alog-off-text">Activity Logs are disabled</span>
                         <button class="btn btn-primary" id="alog-enable-btn">Enable</button>
                     </div>
                     <div class="alog-empty" id="alog-empty" style="display:none">
-                        <svg width="28" height="28" viewBox="0 0 16 16" fill="none" style="opacity:.35">
+                        <svg width="28" height="28" viewBox="0 0 16 16" fill="none">
                             <path d="M4 3v10M2 5l2-2 2 2M12 13V3M10 11l2 2 2-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <span class="alog-off-text">No activity recorded yet</span>

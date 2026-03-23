@@ -150,6 +150,24 @@ function _startAttemptCooldown(errEl, btn, onClear) {
     }, 1000);
 }
 
+/* SHA-256(salt_32 || pw_bytes) — used for duress password detection */
+async function hashDuress(pw, salt) {
+    const saltU8 = new Uint8Array(salt),
+        pwU8 = new TextEncoder().encode(pw),
+        combined = new Uint8Array(saltU8.length + pwU8.length);
+    combined.set(saltU8);
+    combined.set(pwU8, saltU8.length);
+    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', combined)));
+}
+
+/* Check whether pw matches the duress hash stored on a container.
+   Returns true if the container has a duress password and pw matches it. */
+async function checkDuress(pw, container) {
+    if (!container.duressHash || pw.length < 4) return false;
+    const hash = await hashDuress(pw, container.duressHash.salt);
+    return hash.every((b, i) => b === container.duressHash.hash[i]);
+}
+
 /* ============================================================
    FOLDER COLOR PALETTE
    ============================================================ */

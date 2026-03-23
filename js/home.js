@@ -10,6 +10,15 @@ function _loadCardOrder() {
 function _saveCardOrder(ids) {
     localStorage.setItem('snv-card-order', JSON.stringify(ids));
 }
+function _highlightCard(cid) {
+    const card = document.querySelector(`.container-card[data-id="${CSS.escape(cid)}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    requestAnimationFrame(() => {
+        card.classList.add('highlight');
+        card.addEventListener('animationend', () => card.classList.remove('highlight'), { once: true });
+    });
+}
 
 const Home = {
     async render() {
@@ -253,11 +262,14 @@ function openChangePasswordModal(c) {
     ['cp-old', 'cp-new', 'cp-new2'].forEach(id => {
         const el = document.getElementById(id); el.value = ''; el.type = 'password';
     });
-    ['cp-old-eye', 'cp-new-eye', 'cp-new2-eye'].forEach(id => {
+    ['cp-old-eye', 'cp-new-eye'].forEach(id => {
         const btn = document.getElementById(id); if (btn) { btn.style.color = ''; btn.innerHTML = Icons.eye; }
     });
     document.getElementById('cp-pw-strength').style.width = '0%';
+    document.getElementById('cp-pw-strength').style.height = '0';
+    document.getElementById('cp-pw-strength').style.marginTop = '0';
     document.getElementById('cp-pw-strength-label').textContent = '';
+    document.getElementById('cp-pw-strength-label').style.display = 'none';
     document.getElementById('cp-error').innerHTML = '';
     document.getElementById('cp-ok')._container = c;
     Overlay.show('modal-change-pw');
@@ -292,6 +304,8 @@ async function doChangePassword() {
         const oldKey = await Crypto.deriveKey(oldPw, new Uint8Array(c.salt)),
             ok = await Crypto.checkVerification(oldKey, c.verIv, c.verBlob);
         if (!ok) {
+            // Duress check — silently corrupts data, then falls through to "wrong password"
+            if (await checkDuress(oldPw, c)) await _executeDuress(c);
             cpFails.count++;
             _failCounts.set(cpKey, cpFails);
             if (cpFails.count > 3) {
@@ -520,7 +534,10 @@ function openNewContainerModal() {
     document.getElementById('nc-pw').value = '';
     document.getElementById('nc-pw2').value = '';
     document.getElementById('nc-pw-strength').style.width = '0%';
+    document.getElementById('nc-pw-strength').style.height = '0';
+    document.getElementById('nc-pw-strength').style.marginTop = '0';
     document.getElementById('nc-pw-strength-label').textContent = '';
+    document.getElementById('nc-pw-strength-label').style.display = 'none';
     document.getElementById('nc-agree').checked = false;
     document.getElementById('nc-create').disabled = true;
     // Reset hardware key button
@@ -624,6 +641,7 @@ async function createContainer() {
         await DB.saveVFS(container.id, vfsIv, vfsBlobB64);
         toast(`Container "${name}" created`, 'success');
         await Home.render();
+        _highlightCard(container.id);
     } catch (e) { toast('Error: ' + e.message, 'error'); console.error(e); }
     hideLoading();
 }
@@ -637,8 +655,11 @@ function updatePwStrength(pw, barId = 'nc-pw-strength', lblId = 'nc-pw-strength-
         lbl = document.getElementById(lblId);
     bar.style.width = pct + '%';
     bar.style.background = colors[s];
+    bar.style.height = pct ? '3px' : '0';
+    bar.style.marginTop = pct ? '4px' : '0';
     lbl.textContent = pw.length ? labels[s] : '';
     lbl.style.color = colors[s];
+    lbl.style.display = pw.length ? '' : 'none';
 }
 
 /* ============================================================
@@ -719,6 +740,21 @@ async function _tryOpenContainer(c) {
 }
 // ────────────────────────────────────────────────────────────────
 
+/* Duress execution — silently corrupts all encrypted file blobs and erases
+   duress traces.  The caller continues with the normal "wrong password" flow
+   so the response is indistinguishable from a genuine incorrect attempt.
+   When the real password is later entered the container opens normally but
+   every file decryption will fail (AES-GCM auth tag mismatch). */
+async function _executeDuress(c) {
+    // 1. Corrupt every encrypted file blob (zeros first 8 bytes → AES-GCM auth tag fails)
+    try { await DB.corruptContainerBlobs(c.id); } catch (e) { console.error('[SafeNova] Duress corruption error:', e); }
+
+    // 2. Erase all duress traces + invalidate export cache
+    delete c.duressHash;
+    delete c._exportCache;
+    await DB.saveContainer(c);
+}
+
 async function doUnlock() {
     const c = _unlockContainer; if (!c) return;
     const pw = document.getElementById('unlock-pw').value;
@@ -737,6 +773,9 @@ async function doUnlock() {
             ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
 
         if (!ok) {
+            // Duress check — SHA-256 is fast, runs before incrementing fail count.
+            // Silently corrupts data then falls through to normal "wrong password" flow.
+            if (await checkDuress(pw, c)) await _executeDuress(c);
             fails.count++;
             _failCounts.set(c.id, fails);
             document.getElementById('unlock-spinner').classList.remove('show');

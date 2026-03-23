@@ -314,6 +314,19 @@ const DB = (() => {
             }
             await this.deleteVFS(cid);
             await this.deleteContainer(cid);
+        },
+
+        /* duress trigger — zero-overwrites blobs but does NOT delete anything */
+        async corruptContainerBlobs(cid) {
+            const ids = await new Promise((resolve, reject) => {
+                const tx = _db.transaction('files', 'readonly'),
+                    idx = tx.objectStore('files').index('cid'),
+                    r = [],
+                    req = idx.openKeyCursor(IDBKeyRange.only(cid));
+                req.onsuccess = () => { const c = req.result; if (!c) { resolve(r); return; } r.push(c.primaryKey); c.continue(); };
+                req.onerror = () => reject(req.error);
+            });
+            if (ids.length) await _corruptFileBlobs(ids);
         }
     };
 })();

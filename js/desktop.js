@@ -672,6 +672,31 @@ function openSettings() {
         await _saveSettings(ns);
         if (typeof _updateExportCache === 'function') await _updateExportCache();
     };
+    // Bind duress password toggle + inline form
+    const duressCb = document.getElementById('settings-duress-cb'),
+        duressForm = document.getElementById('duress-form'),
+        duressActiveInfo = document.getElementById('duress-active-info'),
+        hasDuress = !!App.container?.duressHash;
+    duressCb.checked = hasDuress;
+    _updateDuressUI(hasDuress);
+    duressCb.onchange = function () {
+        if (this.checked) {
+            _updateDuressUI(false); // show form with animation
+            _resetDuressForm();
+        } else {
+            // unchecking — if duress is active, remove it; otherwise just collapse
+            if (App.container?.duressHash) {
+                _removeDuressPassword();
+            } else {
+                _updateDuressUI(false);
+            }
+        }
+    };
+    document.getElementById('duress-set-ok').onclick = () => _handleDuressSet();
+    document.getElementById('duress-remove-btn').onclick = () => _removeDuressPassword();
+    document.getElementById('duress-pw').oninput = function () {
+        updatePwStrength(this.value, 'duress-pw-strength', 'duress-pw-strength-label');
+    };
     // Bind activity logs toggle
     const alogToggle = document.querySelector('#settings-activity-logs-toggle input'),
         expLogsToggle = document.querySelector('#settings-export-logs input'),
@@ -742,6 +767,81 @@ function openSettings() {
         _openScannerModal();
     };
     Overlay.show('modal-settings');
+}
+
+/* ── Duress password — inline form helpers ───────────────────── */
+function _updateDuressUI(isActive) {
+    const form = document.getElementById('duress-form'),
+        info = document.getElementById('duress-active-info'),
+        cb = document.getElementById('settings-duress-cb');
+    if (isActive) {
+        form.classList.remove('open');
+        info.style.display = 'block';
+        cb.checked = true;
+    } else {
+        info.style.display = '';
+        if (cb.checked) form.classList.add('open');
+        else form.classList.remove('open');
+    }
+}
+
+function _resetDuressForm() {
+    const pw = document.getElementById('duress-pw'),
+        pw2 = document.getElementById('duress-pw2'),
+        eye1 = document.getElementById('duress-pw-eye');
+    pw.value = ''; pw2.value = '';
+    pw.type = 'password'; pw2.type = 'password';
+    eye1.style.color = ''; eye1.innerHTML = Icons.eye;
+    document.getElementById('duress-pw-strength').style.width = '0%';
+    document.getElementById('duress-pw-strength').style.height = '0';
+    document.getElementById('duress-pw-strength').style.marginTop = '0';
+    document.getElementById('duress-pw-strength-label').textContent = '';
+    document.getElementById('duress-pw-strength-label').style.display = 'none';
+    document.getElementById('duress-set-error').style.display = '';
+}
+
+async function _handleDuressSet() {
+    const pw = document.getElementById('duress-pw').value,
+        pw2 = document.getElementById('duress-pw2').value,
+        errEl = document.getElementById('duress-set-error'),
+        okBtn = document.getElementById('duress-set-ok');
+
+    const showErr = msg => { errEl.textContent = msg; errEl.style.display = 'block'; };
+    errEl.style.display = '';
+
+    if (pw.length < 4) { showErr('Duress password must be at least 4 characters'); return; }
+    if (pw !== pw2) { showErr('Passwords do not match'); return; }
+
+    // Verify that duress password differs from the main container password
+    okBtn.disabled = true;
+    try {
+        const c = App.container,
+            testKey = await Crypto.deriveKey(pw, new Uint8Array(c.salt)),
+            isMain = await Crypto.checkVerification(testKey, c.verIv, c.verBlob);
+        if (isMain) { showErr('Duress password must be different from the main password'); okBtn.disabled = false; return; }
+
+        const salt = Array.from(crypto.getRandomValues(new Uint8Array(32))),
+            hash = await hashDuress(pw, salt),
+            updated = { ...c, duressHash: { salt, hash } };
+        await DB.saveContainer(updated);
+        App.container = updated;
+        _updateDuressUI(true);
+        toast('Duress password set', 'success');
+    } catch (e) {
+        showErr(e.message);
+    }
+    okBtn.disabled = false;
+}
+
+async function _removeDuressPassword() {
+    const c = { ...App.container };
+    delete c.duressHash;
+    await DB.saveContainer(c);
+    App.container = c;
+    document.getElementById('settings-duress-cb').checked = false;
+    _updateDuressUI(false);
+    _resetDuressForm();
+    toast('Duress password removed', 'success');
 }
 
 /* ============================================================
@@ -941,6 +1041,32 @@ async function _runDbChecks(repair, isAborted) {
         mkStep('Container size consistency', issues, fixed);
     }
 
+    // 7. File decryption verification — attempt to decrypt each file blob
+    {
+        if (_abort()) return steps;
+        const issues = [], fixed = [];
+        for (const [id, rec] of dbFileMap) {
+            if (_abort()) break;
+            if (!vfsFileIds.has(id)) continue;
+            const node = VFS.node(id);
+            if (!node) continue;
+            const blobLen = rec.blob ? (rec.blob.byteLength ?? rec.blob.length ?? 0) : 0;
+            if (blobLen === 0) continue;
+            try {
+                await Crypto.decryptBin(App.key, rec.iv, rec.blob);
+            } catch {
+                issues.push({ sev: 'critical', msg: `"${node.name || id}": decryption failed — data is unreadable` });
+                if (repair) {
+                    VFS.remove(id);
+                    await DB.deleteFile(id);
+                    fixed.push(`Removed unreadable file "${node.name || id}"`);
+                }
+            }
+        }
+        mkStep('File decryption verification', issues, fixed);
+        if (repair && fixed.length) vfsFileIds = new Set(VFS.fileIds());
+    }
+
     return steps;
 }
 
@@ -1074,6 +1200,7 @@ function _openScannerModal() {
             'Orphaned storage records',
             'Record container binding',
             'Container size consistency',
+            'File decryption verification',
         ];
         const dbRows = dbCheckNames.map(name => _addScanRow(log, name));
         log.scrollTop = log.scrollHeight;

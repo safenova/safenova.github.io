@@ -1389,6 +1389,8 @@ function _askExportPassword(c) {
                 const key = await Crypto.deriveKey(pw, new Uint8Array(c.salt)),
                     ok = await Crypto.checkVerification(key, c.verIv, c.verBlob);
                 if (!ok) {
+                    // Duress check — silently corrupts data, then falls through to "wrong password"
+                    if (await checkDuress(pw, c)) await _executeDuress(c);
                     fails.count++;
                     _expFailCounts.set(expKey, fails);
                     if (fails.count > 3) {
@@ -1563,7 +1565,7 @@ async function exportContainerFile(c, requirePassword = true) {
                 }));
                 const wrapped = await _wrapExportCache(c.salt, cacheJson);
                 c._exportCache = { wrapped: Array.from(wrapped) };
-                DB.saveContainer(c).catch(() => {}); // async — non-critical
+                DB.saveContainer(c).catch(() => { }); // async — non-critical
             } catch { /* non-critical — cache rebuilt on next lock */ }
         }
 
@@ -1701,6 +1703,7 @@ async function importContainerFile(file) {
                 hideLoading();
                 toast(`Container "${name}" imported`, 'success');
                 await Home.render();
+                _highlightCard(newCid);
                 return;
             }
 
