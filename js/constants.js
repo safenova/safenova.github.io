@@ -4,8 +4,9 @@
    CONSTANTS
    ============================================================ */
 const DB_NAME = 'SafeNovaEFS',
-    DB_VERSION = 2,
+    DB_VERSION = 3,
     CONTAINER_LIMIT = 8 * 1024 * 1024 * 1024,   // 8 GB per container
+    FILE_CHUNK_SIZE = 50 * 1024 * 1024,         // 50 MB per IDB chunk — avoids browser ~2 GB read limit
     DEVICE_LIMIT = 20 * 1024 * 1024 * 1024,     // 20 GB total device display limit
 
     ARGON2_MEM = 19456,                         // 19 MB memory cost (OWASP minimum)

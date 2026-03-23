@@ -31,6 +31,9 @@ const DB = (() => {
                     if (!db.objectStoreNames.contains('vfs')) {
                         db.createObjectStore('vfs', { keyPath: 'cid' });
                     }
+                    if (!db.objectStoreNames.contains('chunks')) {
+                        db.createObjectStore('chunks', { keyPath: 'id' });
+                    }
                     InitLog.done('DB schema upgrade');
                 } catch (err) { InitLog.error('DB schema upgrade', err); fail(err); }
             };
@@ -49,6 +52,34 @@ const DB = (() => {
     function ro(store) { return _db.transaction(store, 'readonly').objectStore(store); }
     function wrap(req) { return new Promise((r, j) => { req.onsuccess = () => r(req.result); req.onerror = () => j(req.error); }); }
 
+    // Reassemble a chunked file record: reads N chunks from 'chunks' store,
+    // merges them into a single ArrayBuffer, sets rec.blob, deletes rec._chunked.
+    function _reassemble(rec) {
+        return new Promise((resolve, reject) => {
+            const count = rec._chunked, id = rec.id;
+            const tx = _db.transaction('chunks', 'readonly');
+            const store = tx.objectStore('chunks');
+            const parts = new Array(count);
+            let totalSize = 0, pending = count;
+            for (let i = 0; i < count; i++) {
+                const req = store.get(id + '_' + i);
+                req.onsuccess = () => {
+                    const d = req.result?.data;
+                    if (d) { parts[i] = d; totalSize += d.byteLength; }
+                    if (--pending === 0) {
+                        const merged = new Uint8Array(totalSize);
+                        let off = 0;
+                        for (const p of parts) { if (p) { merged.set(new Uint8Array(p), off); off += p.byteLength; } }
+                        rec.blob = merged.buffer;
+                        delete rec._chunked;
+                        resolve(rec);
+                    }
+                };
+                req.onerror = () => reject(req.error);
+            }
+        });
+    }
+
     return {
         init,
         /* containers */
@@ -57,25 +88,116 @@ const DB = (() => {
         deleteContainer: (id) => wrap(rw('containers').delete(id)),
 
         /* files */
-        saveFile: (f) => wrap(rw('files').put(f)),
-        getFile: (id) => wrap(ro('files').get(id)),
-        getFilesByCid: (cid) => wrap(ro('files').index('cid').getAll(cid)),
-        deleteFile: (id) => wrap(rw('files').delete(id)),
-        // Batch-delete multiple file records in a single IndexedDB transaction
-        deleteFiles: (ids) => new Promise((res, rej) => {
-            if (!ids || !ids.length) { res(); return; }
-            const tx = _db.transaction('files', 'readwrite');
-            const store = tx.objectStore('files');
-            ids.forEach(id => store.delete(id));
-            tx.oncomplete = () => res();
-            tx.onerror = () => rej(tx.error);
-        }),
-        // Batch-save multiple file records in a single IndexedDB transaction
+        saveFile: async (f) => {
+            const blobSize = f.blob ? (f.blob.byteLength ?? 0) : 0;
+            if (blobSize > FILE_CHUNK_SIZE) {
+                const chunkCount = Math.ceil(blobSize / FILE_CHUNK_SIZE);
+                const tx = _db.transaction(['files', 'chunks'], 'readwrite');
+                const fs = tx.objectStore('files'), cs = tx.objectStore('chunks');
+                fs.put({ id: f.id, cid: f.cid, iv: f.iv, blob: null, _chunked: chunkCount });
+                for (let i = 0; i < chunkCount; i++) {
+                    const start = i * FILE_CHUNK_SIZE;
+                    cs.put({ id: f.id + '_' + i, data: f.blob.slice(start, Math.min(start + FILE_CHUNK_SIZE, blobSize)) });
+                }
+                return new Promise((r, j) => { tx.oncomplete = () => r(); tx.onerror = () => j(tx.error); });
+            }
+            return wrap(rw('files').put(f));
+        },
+        getFile: async (id) => {
+            let rec;
+            try { rec = await wrap(ro('files').get(id)); }
+            catch (e) { console.error('[DB] Failed to read file record:', id, e); return null; }
+            if (!rec) return rec;
+            if (rec._chunked) return _reassemble(rec);
+            return rec;
+        },
+        getFilesByCid: async (cid) => {
+            let recs;
+            try {
+                recs = await wrap(ro('files').index('cid').getAll(cid));
+            } catch {
+                // Fallback: key cursor → individual reads (handles unreadable oversized records)
+                const keys = await new Promise((res, rej) => {
+                    const tx = _db.transaction('files', 'readonly');
+                    const idx = tx.objectStore('files').index('cid');
+                    const r = [];
+                    const req = idx.openKeyCursor(IDBKeyRange.only(cid));
+                    req.onsuccess = () => { const c = req.result; if (!c) { res(r); return; } r.push(c.primaryKey); c.continue(); };
+                    req.onerror = () => rej(req.error);
+                });
+                recs = [];
+                for (const key of keys) {
+                    try { const r = await wrap(ro('files').get(key)); if (r) recs.push(r); }
+                    catch (e) { console.error('[DB] Skipping unreadable file:', key, e); }
+                }
+            }
+            const chunked = recs.filter(r => r._chunked);
+            if (chunked.length) await Promise.all(chunked.map(r => _reassemble(r)));
+            return recs;
+        },
+        deleteFile: async (id) => {
+            let chunked = 0;
+            try { const rec = await wrap(ro('files').get(id)); if (rec?._chunked) chunked = rec._chunked; }
+            catch { /* unreadable record — not chunked */ }
+            if (chunked) {
+                const tx = _db.transaction(['files', 'chunks'], 'readwrite');
+                tx.objectStore('files').delete(id);
+                const cs = tx.objectStore('chunks');
+                for (let i = 0; i < chunked; i++) cs.delete(id + '_' + i);
+                return new Promise((r, j) => { tx.oncomplete = () => r(); tx.onerror = () => j(tx.error); });
+            }
+            return wrap(rw('files').delete(id));
+        },
+        // Batch-delete multiple file records (and their chunks) in IndexedDB
+        deleteFiles: async (ids) => {
+            if (!ids || !ids.length) return;
+            // Phase 1: check which files are chunked (read-only, safe for broken records)
+            const chunkInfo = new Map();
+            await new Promise((resolve) => {
+                const tx = _db.transaction('files', 'readonly');
+                const store = tx.objectStore('files');
+                let pending = ids.length;
+                const done = () => { if (--pending === 0) resolve(); };
+                ids.forEach(id => {
+                    const req = store.get(id);
+                    req.onsuccess = () => { if (req.result?._chunked) chunkInfo.set(id, req.result._chunked); done(); };
+                    req.onerror = (e) => { e.preventDefault(); done(); };
+                });
+            });
+            // Phase 2: delete file records + associated chunks
+            const stores = chunkInfo.size ? ['files', 'chunks'] : ['files'];
+            const tx = _db.transaction(stores, 'readwrite');
+            const fs = tx.objectStore('files');
+            ids.forEach(id => fs.delete(id));
+            if (chunkInfo.size) {
+                const cs = tx.objectStore('chunks');
+                for (const [id, count] of chunkInfo) {
+                    for (let i = 0; i < count; i++) cs.delete(id + '_' + i);
+                }
+            }
+            return new Promise((r, j) => { tx.oncomplete = () => r(); tx.onerror = () => j(tx.error); });
+        },
+        // Batch-save multiple file records in a single IndexedDB transaction (with chunking for large blobs)
         saveFiles: (files) => new Promise((res, rej) => {
             if (!files || !files.length) { res(); return; }
-            const tx = _db.transaction('files', 'readwrite');
-            const store = tx.objectStore('files');
-            files.forEach(f => store.put(f));
+            const hasChunked = files.some(f => f.blob && (f.blob.byteLength ?? 0) > FILE_CHUNK_SIZE);
+            const stores = hasChunked ? ['files', 'chunks'] : ['files'];
+            const tx = _db.transaction(stores, 'readwrite');
+            const fileStore = tx.objectStore('files');
+            const chunkStore = hasChunked ? tx.objectStore('chunks') : null;
+            files.forEach(f => {
+                const blobSize = f.blob ? (f.blob.byteLength ?? 0) : 0;
+                if (blobSize > FILE_CHUNK_SIZE) {
+                    const chunkCount = Math.ceil(blobSize / FILE_CHUNK_SIZE);
+                    fileStore.put({ id: f.id, cid: f.cid, iv: f.iv, blob: null, _chunked: chunkCount });
+                    for (let i = 0; i < chunkCount; i++) {
+                        const start = i * FILE_CHUNK_SIZE;
+                        chunkStore.put({ id: f.id + '_' + i, data: f.blob.slice(start, Math.min(start + FILE_CHUNK_SIZE, blobSize)) });
+                    }
+                } else {
+                    fileStore.put(f);
+                }
+            });
             tx.oncomplete = () => res();
             tx.onerror = () => rej(tx.error);
         }),
@@ -86,14 +208,30 @@ const DB = (() => {
             const tx = _db.transaction('files', 'readonly');
             const store = tx.objectStore('files');
             const result = new Map();
+            const chunkedRecs = [];
             let pending = ids.length;
             ids.forEach(id => {
                 const req = store.get(id);
                 req.onsuccess = () => {
-                    if (req.result) result.set(id, req.result);
-                    if (--pending === 0) res(result);
+                    if (req.result) {
+                        result.set(id, req.result);
+                        if (req.result._chunked) chunkedRecs.push(req.result);
+                    }
+                    if (--pending === 0) {
+                        if (chunkedRecs.length) {
+                            Promise.all(chunkedRecs.map(r => _reassemble(r))).then(() => res(result)).catch(rej);
+                        } else res(result);
+                    }
                 };
-                req.onerror = () => rej(req.error);
+                req.onerror = (event) => {
+                    console.error('[DB] Failed to read file:', id, req.error);
+                    event.preventDefault();
+                    if (--pending === 0) {
+                        if (chunkedRecs.length) {
+                            Promise.all(chunkedRecs.map(r => _reassemble(r))).then(() => res(result)).catch(rej);
+                        } else res(result);
+                    }
+                };
             });
         }),
 
@@ -102,10 +240,17 @@ const DB = (() => {
         getVFS: (cid) => wrap(ro('vfs').get(cid)),
         deleteVFS: (cid) => wrap(rw('vfs').delete(cid)),
 
-        /* nuke container — deletes everything */
+        /* nuke container — deletes everything (uses key cursor to avoid deserializing large blobs) */
         async nukeContainer(cid) {
-            const files = await this.getFilesByCid(cid);
-            if (files.length) await this.deleteFiles(files.map(f => f.id));
+            const ids = await new Promise((resolve, reject) => {
+                const tx = _db.transaction('files', 'readonly');
+                const idx = tx.objectStore('files').index('cid');
+                const r = [];
+                const req = idx.openKeyCursor(IDBKeyRange.only(cid));
+                req.onsuccess = () => { const c = req.result; if (!c) { resolve(r); return; } r.push(c.primaryKey); c.continue(); };
+                req.onerror = () => reject(req.error);
+            });
+            if (ids.length) await this.deleteFiles(ids);
             await this.deleteVFS(cid);
             await this.deleteContainer(cid);
         }

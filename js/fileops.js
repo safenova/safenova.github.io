@@ -1094,6 +1094,55 @@ function _readZip(buffer) {
     }
     return entries;
 }
+async function _readZipFromFile(file) {
+    const size = file.size;
+    // Read EOCD from the tail (last 65 KB is sufficient)
+    const tailSize = Math.min(65558, size);
+    const tailBuf = await file.slice(size - tailSize, size).arrayBuffer();
+    const tailView = new DataView(tailBuf);
+    let eocdOffset = -1;
+    for (let i = tailBuf.byteLength - 22; i >= 0; i--) {
+        if (tailView.getUint32(i, true) === 0x06054b50) { eocdOffset = i; break; }
+    }
+    if (eocdOffset < 0) throw new Error('Not a valid ZIP file');
+    const cdCount = tailView.getUint16(eocdOffset + 8, true),
+        cdSize  = tailView.getUint32(eocdOffset + 12, true),
+        cdOffset = tailView.getUint32(eocdOffset + 16, true);
+    // Read central directory
+    const cdBuf = await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer();
+    const cdView = new DataView(cdBuf);
+    const cdU8 = new Uint8Array(cdBuf);
+    const dec = new TextDecoder('utf-8');
+    const infos = [];
+    let pos = 0;
+    for (let i = 0; i < cdCount; i++) {
+        if (cdView.getUint32(pos, true) !== 0x02014b50) break;
+        const fnLen = cdView.getUint16(pos + 28, true),
+            exLen = cdView.getUint16(pos + 30, true),
+            cmLen = cdView.getUint16(pos + 32, true),
+            compSize = cdView.getUint32(pos + 20, true),
+            lhOff = cdView.getUint32(pos + 42, true),
+            fn = dec.decode(cdU8.subarray(pos + 46, pos + 46 + fnLen));
+        infos.push({ name: fn, lhOff, compSize });
+        pos += 46 + fnLen + exLen + cmLen;
+    }
+    // Read each entry: small ones into Uint8Array, workspace.bin as Blob (no full-file RAM load)
+    const entries = {};
+    for (const info of infos) {
+        const lhBuf = await file.slice(info.lhOff, info.lhOff + 30).arrayBuffer();
+        const lhView = new DataView(lhBuf);
+        const lhFnLen = lhView.getUint16(26, true),
+            lhExLen = lhView.getUint16(28, true);
+        const dataOff = info.lhOff + 30 + lhFnLen + lhExLen;
+        if (info.name === 'safenova_efs/workspace.bin') {
+            entries[info.name] = file.slice(dataOff, dataOff + info.compSize);
+        } else {
+            const buf = await file.slice(dataOff, dataOff + info.compSize).arrayBuffer();
+            entries[info.name] = new Uint8Array(buf);
+        }
+    }
+    return entries;
+}
 function _crc32(data) {
     if (!_crc32._t) {
         const t = new Uint32Array(256);
@@ -1393,19 +1442,19 @@ async function exportContainerFile(c, requirePassword = true) {
 
 async function importContainerFile(file) {
     if (!file) return;
-    const MAX_IMPORT_SIZE = 256 * 1024 * 1024; // 256 MB hard cap
+    const MAX_IMPORT_SIZE = CONTAINER_LIMIT; // matches per-container 8 GB limit
     if (file.size > MAX_IMPORT_SIZE) {
         toast(`Import file too large (max ${fmtSize(MAX_IMPORT_SIZE)})`, 'error');
         return;
     }
     showLoading('Importing container…');
     try {
-        const arrayBuf = await file.arrayBuffer(),
-            u8first = new Uint8Array(arrayBuf, 0, 2),
+        const headerBuf = await file.slice(0, 2).arrayBuffer(),
+            u8first = new Uint8Array(headerBuf),
             isZip = u8first[0] === 0x50 && u8first[1] === 0x4B;
 
         if (isZip) {
-            const entries = _readZip(arrayBuf);
+            const entries = await _readZipFromFile(file);
             if (!entries['container.xml'] || !entries['meta/0'] || !entries['meta/1'] || !entries['safenova_efs/workspace.bin'])
                 throw new Error('Invalid SafeNova file: missing required entries');
 

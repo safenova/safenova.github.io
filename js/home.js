@@ -753,12 +753,16 @@ async function doUnlock() {
             showLoading('Restoring files from import\u2026');
             try {
                 const { bin, mIv, mBlob } = c.lazyWorkspace;
-                const decBuf = await Crypto.decryptBin(key, Array.from(mIv), mBlob.buffer || mBlob);
+                const mBlobBuf = mBlob instanceof Blob ? await mBlob.arrayBuffer() : (mBlob.buffer || mBlob);
+                const decBuf = await Crypto.decryptBin(key, Array.from(new Uint8Array(mIv)), mBlobBuf);
                 const manifest = JSON.parse(new TextDecoder().decode(decBuf));
-                const filesToSave = manifest.map(m => ({
-                    id: m.id, cid: c.id,
-                    iv: Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
-                    blob: bin.slice(m.offset, m.offset + m.size).buffer
+                const filesToSave = await Promise.all(manifest.map(async m => {
+                    const raw = bin.slice(m.offset, m.offset + m.size);
+                    return {
+                        id: m.id, cid: c.id,
+                        iv: Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
+                        blob: raw instanceof Blob ? await raw.arrayBuffer() : (raw.buffer ?? raw)
+                    };
                 }));
                 await DB.saveFiles(filesToSave);
                 const cleanCont = Object.assign({}, c);
@@ -863,12 +867,16 @@ async function _resumeSession(c, rawKeyBytes) {
         if (c.lazyWorkspace) {
             try {
                 const { bin, mIv, mBlob } = c.lazyWorkspace;
-                const decBuf = await Crypto.decryptBin(key, Array.from(mIv), mBlob.buffer || mBlob);
+                const mBlobBuf = mBlob instanceof Blob ? await mBlob.arrayBuffer() : (mBlob.buffer || mBlob);
+                const decBuf = await Crypto.decryptBin(key, Array.from(new Uint8Array(mIv)), mBlobBuf);
                 const manifest = JSON.parse(new TextDecoder().decode(decBuf));
-                const filesToSave = manifest.map(m => ({
-                    id: m.id, cid: c.id,
-                    iv: Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
-                    blob: bin.slice(m.offset, m.offset + m.size).buffer
+                const filesToSave = await Promise.all(manifest.map(async m => {
+                    const raw = bin.slice(m.offset, m.offset + m.size);
+                    return {
+                        id: m.id, cid: c.id,
+                        iv: Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
+                        blob: raw instanceof Blob ? await raw.arrayBuffer() : (raw.buffer ?? raw)
+                    };
                 }));
                 await DB.saveFiles(filesToSave);
                 const cleanCont = Object.assign({}, c);
