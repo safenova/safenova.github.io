@@ -110,6 +110,10 @@ async function _uploadFileEntry(fileEntry, targetFolderId) {
         toast(`"${name}" already exists — skipped`, 'warn');
         return false;
     }
+    if (VFS.totalSize() + file.size > CONTAINER_LIMIT) {
+        _uploadLimitHit = true;
+        return false;
+    }
     const buf = await file.arrayBuffer(),
         mime = file.type || getMime(name),
         { iv, blob } = await Crypto.encryptBin(App.key, buf),
@@ -149,12 +153,15 @@ async function _uploadDirEntry(dirEntry, targetFolderId, depth) {
     return true;
 }
 
+let _uploadLimitHit = false;
+
 // Main drop entry point for desktop and folder-window drop events.
 // Accepts DataTransferItemList (supports both files and folders).
 async function uploadEntries(dataTransferItems, targetFolderId) {
     if (!App.key || !App.container) return;
     const itemArr = Array.from(dataTransferItems || []);
     if (!itemArr.length) return;
+    _uploadLimitHit = false;
 
     const entries = itemArr.map(i => i.webkitGetAsEntry?.()).filter(Boolean);
     if (!entries.length) {
@@ -195,6 +202,7 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
             logActivity('upload', ok === 1 ? (entries[0]?.name ?? '1 item') : `${ok} items`, ok, _sn ? VFS.fullPath(_sn.id) : null);
         }
     }
+    if (_uploadLimitHit) toast(`Container is full (${fmtSize(CONTAINER_LIMIT)}) — some files were not imported`, 'error');
 }
 
 /* ============================================================

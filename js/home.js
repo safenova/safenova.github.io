@@ -118,7 +118,7 @@ const Home = {
         </div>
         <div class="container-card-sizes">
           <span>${fmtSize(c.totalSize || 0)} used</span>
-          <span>${fmtSize(CONTAINER_LIMIT - (c.totalSize || 0))} free</span>
+          <span>${fmtSize(Math.max(0, CONTAINER_LIMIT - (c.totalSize || 0)))} free</span>
         </div>
       </div>
       ${hasSess ? `<div class="session-badge" title="Active session — click to resume">

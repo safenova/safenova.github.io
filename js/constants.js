@@ -44,7 +44,7 @@ const _TAB_ID = (() => {
 })();
 
 function fmtSize(b) {
-    if (b === 0) return '0 B';
+    if (!Number.isFinite(b) || b <= 0) return '0 B';
     const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'],
         i = Math.min(Math.floor(Math.log(b) / Math.log(k)), s.length - 1);
     return (b / Math.pow(k, i)).toFixed(i > 0 ? 1 : 0) + ' ' + s[i];
