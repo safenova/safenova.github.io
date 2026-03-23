@@ -1447,7 +1447,13 @@ async function _updateExportCache() {
             return entry;
         });
         const enc = await Crypto.encryptBin(App.key, new TextEncoder().encode(JSON.stringify(manifest)));
-        App.container._exportCache = { mIv: enc.iv, mBlob: enc.blob, order };
+        const cacheJson = new TextEncoder().encode(JSON.stringify({
+            mIv: enc.iv,
+            mBlob: Array.from(new Uint8Array(enc.blob)),
+            order
+        }));
+        const wrapped = await wrapWithBrowserKey(cacheJson);
+        App.container._exportCache = { wrapped: Array.from(wrapped) };
         await DB.saveContainer(App.container);
     } catch (e) {
         console.error('[SafeNova] Export cache generation failed:', e);
@@ -1476,23 +1482,27 @@ async function exportContainerFile(c, requirePassword = true) {
         }
 
         // Try pre-generated export cache (no key/session needed)
-        if (!requirePassword && !key && c._exportCache) {
-            const cache = c._exportCache, fileMap = new Map(fileRecs.map(r => [r.id, r]));
-            let valid = cache.order.length === fileRecs.length;
-            if (valid) {
-                for (const o of cache.order) {
-                    const rec = fileMap.get(o.id);
-                    if (!rec) { valid = false; break; }
-                    const sz = rec.blob instanceof ArrayBuffer ? rec.blob.byteLength : (rec.blob?.byteLength || 0);
-                    if (sz !== o.sz) { valid = false; break; }
+        if (!requirePassword && !key && c._exportCache?.wrapped) {
+            try {
+                const plainBytes = await unwrapWithBrowserKey(new Uint8Array(c._exportCache.wrapped));
+                const cache = JSON.parse(new TextDecoder().decode(plainBytes));
+                const fileMap = new Map(fileRecs.map(r => [r.id, r]));
+                let valid = cache.order.length === fileRecs.length;
+                if (valid) {
+                    for (const o of cache.order) {
+                        const rec = fileMap.get(o.id);
+                        if (!rec) { valid = false; break; }
+                        const sz = rec.blob instanceof ArrayBuffer ? rec.blob.byteLength : (rec.blob?.byteLength || 0);
+                        if (sz !== o.sz) { valid = false; break; }
+                    }
                 }
-            }
-            if (valid) {
-                fileRecs = cache.order.map(o => fileMap.get(o.id));
-                encManifestIv = new Uint8Array(cache.mIv);
-                encManifestBlob = new Uint8Array(cache.mBlob);
-                usedCache = true;
-            }
+                if (valid) {
+                    fileRecs = cache.order.map(o => fileMap.get(o.id));
+                    encManifestIv = new Uint8Array(cache.mIv);
+                    encManifestBlob = new Uint8Array(cache.mBlob);
+                    usedCache = true;
+                }
+            } catch { /* fingerprint changed or cache corrupted — fall through to password prompt */ }
         }
 
         if (!usedCache && !key) {
