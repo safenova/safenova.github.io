@@ -905,12 +905,12 @@ html.snv-doc-hidden #home-doc-tab {
 .unlock-error {
     font-size: 12px;
     color: var(--red);
-    display: flex;
+    display: none;
     align-items: center;
     gap: 8px;
     max-height: 0;
     overflow: hidden;
-    padding: 0 10px;
+    padding: 0;
     border: 1px solid transparent;
     border-radius: var(--r);
     background: transparent;
@@ -921,6 +921,7 @@ html.snv-doc-hidden #home-doc-tab {
         border-color var(--transition);
 }
 .unlock-error:not(:empty) {
+    display: flex;
     max-height: 52px;
     padding: 8px 10px;
     background: var(--bg4);
@@ -1375,7 +1376,29 @@ body.no-animations * {
     flex: 1;
     overflow: hidden;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+}
+.editor-line-numbers {
+    flex-shrink: 0;
+    width: 48px;
+    overflow: hidden;
+    padding: 16px 0;
+    background: var(--bg3);
+    border-right: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    user-select: none;
+    -webkit-user-select: none;
+}
+.editor-line-numbers > div {
+    padding-right: 8px;
+    text-align: right;
+    white-space: nowrap;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
 }
 .editor-meta {
     padding: 6px 12px;

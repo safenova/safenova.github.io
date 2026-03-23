@@ -197,6 +197,12 @@ function initEvents() {
     document.getElementById('cp-close').addEventListener('click', () => Overlay.hide());
     document.getElementById('cp-cancel').addEventListener('click', () => Overlay.hide());
     document.getElementById('cp-ok').addEventListener('click', doChangePassword);
+    document.getElementById('cp-old-eye').addEventListener('click', () => togglePwEye('cp-old', 'cp-old-eye'));
+    document.getElementById('cp-new-eye').addEventListener('click', () => togglePwEye('cp-new', 'cp-new-eye'));
+    document.getElementById('cp-new2-eye').addEventListener('click', () => togglePwEye('cp-new2', 'cp-new2-eye'));
+    document.getElementById('cp-new').addEventListener('input', e => updatePwStrength(e.target.value, 'cp-pw-strength', 'cp-pw-strength-label'));
+    document.getElementById('cp-old').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-new').focus(); });
+    document.getElementById('cp-new').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('cp-new2').focus(); });
     document.getElementById('cp-new2').addEventListener('keydown', e => { if (e.key === 'Enter') doChangePassword(); });
 
     /* ---- Rename Container ---- */
@@ -334,7 +340,10 @@ window.addEventListener('storage', e => {
 
 // Release the session claim on tab close / navigation.
 // Both beforeunload (desktop) and pagehide (mobile / bfcache) are needed.
-function _onTabUnload() {
+// If an operation is in progress (upload, encrypt, import, etc.), warn
+// the user before closing — prevents data corruption from interrupted writes.
+function _onTabUnload(e) {
+    if (_appBusy > 0) { e.preventDefault(); e.returnValue = ''; }
     if (App.container?.id) _stopContainerSession(App.container.id);
 }
 window.addEventListener('beforeunload', _onTabUnload);

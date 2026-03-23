@@ -526,11 +526,14 @@ const App = {
 /* ============================================================
    LOADING OVERLAY
    ============================================================ */
+let _appBusy = 0;
 function showLoading(msg = 'Processing...') {
+    _appBusy++;
     document.getElementById('loading-msg').textContent = msg;
     document.getElementById('loading-overlay').classList.add('show');
 }
 function hideLoading() {
+    _appBusy = Math.max(0, _appBusy - 1);
     document.getElementById('loading-overlay').classList.remove('show');
 }
 

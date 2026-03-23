@@ -732,6 +732,55 @@ function showProps(node) {
 }
 
 /* ============================================================
+   LINE NUMBER HELPERS
+   ============================================================ */
+let _lineNumCanvas = null;
+let _lineNumTimer  = null;
+
+function _measureWrappedLineHeights(ta, lines) {
+    const cs  = window.getComputedStyle(ta);
+    const lh  = parseFloat(cs.lineHeight);
+    const taW = ta.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (taW <= 0) return lines.map(() => lh);
+    if (!_lineNumCanvas) _lineNumCanvas = document.createElement('canvas');
+    const ctx     = _lineNumCanvas.getContext('2d');
+    const tabSize = parseInt(cs.tabSize) || 2;
+    const tabStr  = '\u00a0'.repeat(tabSize);
+    ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return lines.map(line => {
+        if (!line) return lh;
+        const expanded = line.replace(/\t/g, tabStr);
+        const w = ctx.measureText(expanded).width;
+        return Math.max(1, Math.ceil(w / taW)) * lh;
+    });
+}
+
+function _updateLineNumbers() {
+    const ta     = document.getElementById('editor-textarea');
+    const gutter = document.getElementById('editor-line-numbers');
+    if (!gutter || !ta) return;
+    const lines     = ta.value.split('\n');
+    const isWrapped = ta.classList.contains('word-wrap');
+    const lh        = parseFloat(window.getComputedStyle(ta).lineHeight) || 20.8;
+    const heights   = isWrapped ? _measureWrappedLineHeights(ta, lines) : null;
+    const frag      = document.createDocumentFragment();
+    for (let i = 0; i < lines.length; i++) {
+        const d = document.createElement('div');
+        d.textContent = i + 1;
+        d.style.height = (heights ? heights[i] : lh) + 'px';
+        frag.appendChild(d);
+    }
+    gutter.innerHTML = '';
+    gutter.appendChild(frag);
+    gutter.scrollTop = ta.scrollTop;
+}
+
+function _scheduleLineNumberUpdate() {
+    clearTimeout(_lineNumTimer);
+    _lineNumTimer = setTimeout(_updateLineNumbers, 80);
+}
+
+/* ============================================================
    TEXT EDITOR
    ============================================================ */
 let _editorNode = null;
@@ -752,14 +801,20 @@ function openEditor(node, buf) {
     wrapBtn.onclick = () => {
         ta.classList.toggle('word-wrap');
         wrapBtn.classList.toggle('active', ta.classList.contains('word-wrap'));
+        _updateLineNumbers();
     };
     ta.oninput = () => {
         document.getElementById('editor-meta-chars').textContent = ta.value.length + ' chars';
         document.getElementById('editor-meta-lines').textContent = ta.value.split('\n').length + ' lines';
         const mod = document.getElementById('editor-meta-modified');
         mod.style.display = ta.value !== _editorOriginal ? '' : 'none';
+        _updateLineNumbers();
     };
     ta.oninput();
+    ta.onscroll = () => {
+        const gutter = document.getElementById('editor-line-numbers');
+        if (gutter) gutter.scrollTop = ta.scrollTop;
+    };
     // Custom context menu for text editor (works on desktop + mobile)
     ta.oncontextmenu = e => {
         e.preventDefault();
@@ -788,8 +843,9 @@ function openEditor(node, buf) {
             { label: 'Select All', icon: _selAllIcon, action: () => { ta.focus(); ta.select(); } }
         ]);
     };
+    _updateLineNumbers();
     Overlay.show('modal-editor');
-    setTimeout(() => ta.focus(), 100);
+    setTimeout(() => { ta.focus(); _updateLineNumbers(); }, 100);
 }
 
 async function saveEditor() {
@@ -824,6 +880,14 @@ async function saveEditor() {
     return saved;
 }
 
+function _clearEditorMemory() {
+    const ta     = document.getElementById('editor-textarea');
+    const gutter = document.getElementById('editor-line-numbers');
+    if (ta) { ta.value = ''; ta.onscroll = null; }
+    if (gutter) gutter.innerHTML = '';
+    _editorOriginal = '';
+}
+
 function closeEditor() {
     const ta = document.getElementById('editor-textarea');
     const modified = ta.value !== _editorOriginal;
@@ -834,16 +898,18 @@ function closeEditor() {
     }
     Overlay.hide();
     _editorNode = null;
+    _clearEditorMemory();
 }
 
 function discardEditor() {
     Overlay.hide();
     _editorNode = null;
+    _clearEditorMemory();
 }
 
 async function saveAndCloseEditor() {
     const ok = await saveEditor();
-    if (ok) { Overlay.hide(); _editorNode = null; }
+    if (ok) { Overlay.hide(); _editorNode = null; _clearEditorMemory(); }
 }
 
 /* ============================================================
@@ -1037,6 +1103,7 @@ function closeViewer() {
     content.querySelectorAll('audio, video').forEach(el => { el.pause(); el.src = ''; });
     content.querySelectorAll('.twc-player').forEach(p => { p._cleanupKeyboard?.(); p._cleanupFs?.(); });
     if (_viewerBlob) { URL.revokeObjectURL(_viewerBlob.url); _viewerBlob = null; }
+    content.innerHTML = '';
     Overlay.hide();
 }
 

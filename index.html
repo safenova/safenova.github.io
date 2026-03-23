@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: data:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; frame-src blob:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'none'; object-src 'none'">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="description" content="SafeNova — browser-based encrypted virtual file system. AES-256-GCM + Argon2id, zero-knowledge, fully offline.">
     <meta name="theme-color" content="#1e1e1e">
@@ -14,8 +14,8 @@
     <title>SafeNova</title>
     <link rel="icon" href="favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="favicon.png">
+    <script src="js/docmode.js"></script>
     <link rel="stylesheet" href="css/app.css">
-    <script>if (localStorage.getItem('snv-doc-hide') === '1') document.documentElement.classList.add('snv-doc-hidden');</script>
 </head>
 
 <body>
@@ -440,6 +440,7 @@
                 </div>
             </div>
             <div class="editor-area">
+                <div class="editor-line-numbers" id="editor-line-numbers"></div>
                 <textarea class="code-editor" id="editor-textarea" spellcheck="false"></textarea>
             </div>
             <div class="editor-meta">
@@ -683,15 +684,41 @@
             <div class="modal-body">
                 <div class="form-group">
                     <label class="form-label">Current Password</label>
-                    <input type="password" class="input" id="cp-old" placeholder="Enter current password" autocomplete="current-password">
+                    <div class="input-wrap">
+                        <input type="password" class="input" id="cp-old" placeholder="Enter current password" autocomplete="current-password">
+                        <button class="input-eye" id="cp-old-eye" tabindex="-1">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.5" />
+                                <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5" />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">New Password</label>
-                    <input type="password" class="input" id="cp-new" placeholder="Enter new password" autocomplete="new-password">
+                    <div class="input-wrap">
+                        <input type="password" class="input" id="cp-new" placeholder="Enter new password" autocomplete="new-password">
+                        <button class="input-eye" id="cp-new-eye" tabindex="-1">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.5" />
+                                <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="pw-strength" id="cp-pw-strength" style="width:0%"></div>
+                    <div class="pw-strength-row" id="cp-pw-strength-label"></div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Confirm New Password</label>
-                    <input type="password" class="input" id="cp-new2" placeholder="Repeat new password" autocomplete="new-password">
+                    <div class="input-wrap">
+                        <input type="password" class="input" id="cp-new2" placeholder="Repeat new password" autocomplete="new-password">
+                        <button class="input-eye" id="cp-new2-eye" tabindex="-1">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" stroke="currentColor" stroke-width="1.5" />
+                                <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5" />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="notice-box warn">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;margin-top:1px">

@@ -179,6 +179,12 @@ try {
                 $resp.ContentLength64 = $bytes.Length
                 # Cache-Control: no-cache — browser always revalidates; avoids stale files during dev
                 $resp.Headers.Add('Cache-Control', 'no-cache')
+                $resp.Headers.Add('X-Content-Type-Options', 'nosniff')
+                $resp.Headers.Add('X-Frame-Options', 'DENY')
+                $resp.Headers.Add('Referrer-Policy', 'no-referrer')
+                $resp.Headers.Add('Permissions-Policy', 'interest-cohort=(), geolocation=(), camera=(), microphone=()')
+                $resp.Headers.Add('Cross-Origin-Opener-Policy', 'same-origin')
+                $resp.Headers.Add('Cross-Origin-Embedder-Policy', 'require-corp')
 
                 # HEAD — headers only, no body
                 if ($method -ne 'HEAD') {

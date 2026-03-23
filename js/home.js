@@ -250,10 +250,15 @@ function killSession(c) {
 
 /* ---- Change Password ---- */
 function openChangePasswordModal(c) {
-    document.getElementById('cp-old').value = '';
-    document.getElementById('cp-new').value = '';
-    document.getElementById('cp-new2').value = '';
-    document.getElementById('cp-error').textContent = '';
+    ['cp-old', 'cp-new', 'cp-new2'].forEach(id => {
+        const el = document.getElementById(id); el.value = ''; el.type = 'password';
+    });
+    ['cp-old-eye', 'cp-new-eye', 'cp-new2-eye'].forEach(id => {
+        const btn = document.getElementById(id); if (btn) { btn.style.color = ''; btn.innerHTML = Icons.eye; }
+    });
+    document.getElementById('cp-pw-strength').style.width = '0%';
+    document.getElementById('cp-pw-strength-label').textContent = '';
+    document.getElementById('cp-error').innerHTML = '';
     document.getElementById('cp-ok')._container = c;
     Overlay.show('modal-change-pw');
     setTimeout(() => document.getElementById('cp-old').focus(), 100);
@@ -317,6 +322,27 @@ async function doChangePassword() {
             await DB.saveVFS(c.id, newVfsIv, newVfsBlob);
         }
 
+        // Expand lazy workspace (if never unlocked) so file blobs enter the re-encryption pass below.
+        // The blobs are encrypted with oldKey — expanding them into IDB first is required
+        // so the per-file loop below can decrypt and re-encrypt each one with newKey.
+        if (c.lazyWorkspace) {
+            showLoading('Restoring files from import\u2026');
+            const { bin, mIv, mBlob } = c.lazyWorkspace;
+            const mBlobBuf = mBlob instanceof Blob ? await mBlob.arrayBuffer() : (mBlob.buffer || mBlob);
+            const decBuf = await Crypto.decryptBin(oldKey, Array.from(new Uint8Array(mIv)), mBlobBuf);
+            const manifest = JSON.parse(new TextDecoder().decode(decBuf));
+            const filesToExpand = await Promise.all(manifest.map(async m => {
+                const raw = bin.slice(m.offset, m.offset + m.size);
+                return {
+                    id: m.id, cid: c.id,
+                    iv: Array.from(Uint8Array.from(atob(m.ivB64), ch => ch.charCodeAt(0))),
+                    blob: raw instanceof Blob ? await raw.arrayBuffer() : (raw.buffer ?? raw)
+                };
+            }));
+            await DB.saveFiles(filesToExpand);
+            delete c.lazyWorkspace;
+        }
+
         // Re-encrypt all files fully in parallel (Web Crypto is async/hardware-accelerated;
         // browser schedules concurrent SubtleCrypto calls across available cores)
         const files = await DB.getFilesByCid(c.id);
@@ -335,18 +361,6 @@ async function doChangePassword() {
             .map(r => r.value);
         if (reencFiles.length) await DB.saveFiles(reencFiles);
 
-        // Re-encrypt lazyWorkspace manifest if present (imported-but-never-unlocked containers)
-        if (c.lazyWorkspace) {
-            showLoading('Re-encrypting workspace…');
-            const { bin, mIv, mBlob } = c.lazyWorkspace;
-            const manifestBuf = await Crypto.decryptBin(oldKey, Array.from(mIv), mBlob.buffer || mBlob);
-            const reEnc = await Crypto.encryptBin(newKey, manifestBuf);
-            c.lazyWorkspace = {
-                bin,
-                mIv: new Uint8Array(reEnc.iv),
-                mBlob: new Uint8Array(reEnc.blob),
-            };
-        }
 
         // New verification blob
         showLoading('Finalizing…');
@@ -613,13 +627,13 @@ async function createContainer() {
     hideLoading();
 }
 
-function updatePwStrength(pw) {
+function updatePwStrength(pw, barId = 'nc-pw-strength', lblId = 'nc-pw-strength-label') {
     const s = pwStrength(pw),
         pct = [0, 20, 40, 60, 80, 100][s],
         colors = ['#555', '#f44747', '#ce9178', '#dcdcaa', '#6a9955', '#4ec9b0'],
         labels = ['', 'Very Weak', 'Weak', 'Fair', 'Strong', 'Very Strong'],
-        bar = document.getElementById('nc-pw-strength'),
-        lbl = document.getElementById('nc-pw-strength-label');
+        bar = document.getElementById(barId),
+        lbl = document.getElementById(lblId);
     bar.style.width = pct + '%';
     bar.style.background = colors[s];
     lbl.textContent = pw.length ? labels[s] : '';

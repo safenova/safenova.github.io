@@ -1723,7 +1723,10 @@ function _initTouchDragCommon(area, owner, opts = {}) {
                 VFS.setPos(owner.folderId, id, snapped.x, snapped.y);
             });
         }
-        owner._updateStatus(); await saveVFS();
+        owner._updateStatus();
+        // Wait for the snap transition to finish (120ms) before the heavy DB write
+        await new Promise(r => setTimeout(r, 130));
+        await saveVFS();
         if (opts.afterDrop) opts.afterDrop();
         if (typeof WinManager !== 'undefined') WinManager.renderAll();
 
@@ -2292,6 +2295,8 @@ function _startIconDrag(e, node, el, srcCtx) {
             setTimeout(() => { if (item.parentNode) item.style.transition = ''; }, 150);
             VFS.setPos(srcCtx.folderId, id, snapped.x, snapped.y);
         });
+        // Wait for the snap transition to finish (120ms) before the heavy DB write
+        await new Promise(r => setTimeout(r, 130));
         await saveVFS();
         if (isDesktop) {
             srcCtx.updateUI();
