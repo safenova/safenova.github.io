@@ -69,6 +69,15 @@
 
     const _origin = window.location.origin;
 
+    // Capture direct object references to the storage instances.
+    // This is done BEFORE building _N because window.localStorage and
+    // window.sessionStorage are live getters — if an attacker later
+    // replaces them with Object.defineProperty, our saved refs still
+    // point to the real storage objects, so _nukeStorage cannot be
+    // fooled by a getter-level interception.
+    const _ls = (() => { try { return window.localStorage;   } catch { return null; } })();
+    const _ss = (() => { try { return window.sessionStorage; } catch { return null; } })();
+
     /* ──────────────────────────────────────────────────────────
        1.  Lock in native references
        ────────────────────────────────────────────────────────── */
@@ -147,10 +156,19 @@
     let _lastAlertAt = 0;
     const _ALERT_COOLDOWN_MS = 10_000;
 
-    // Use captured native Storage references — bypasses any potential
-    // hook placed on Storage.prototype by a malicious extension
+    // Wipe all snv-* keys from storage using a two-pass strategy:
+    //   Pass 1 — overwrite every key value with zeros (destroys key
+    //             material immediately; even if removeItem is later
+    //             intercepted or fails, the actual bytes are gone)
+    //   Pass 2 — delete the entries via the captured native prototype ref
+    //
+    // Uses _ls/_ss (captured object refs) as `this`, NOT the live
+    // window.localStorage / window.sessionStorage getters, so a
+    // getter-level replacement attack cannot redirect calls to a fake
+    // storage object.
     function _nukeStorage() {
-        const removeFrom = (store) => {
+        const nuke = (store) => {
+            if (!store) return;
             try {
                 const len = _N.storageLength.call(store);
                 const keys = [];
@@ -158,11 +176,23 @@
                     const k = _N.storageKey.call(store, i);
                     if (k?.startsWith('snv-')) keys.push(k);
                 }
-                keys.forEach(k => _N.storageRemoveItem.call(store, k));
+                if (!keys.length) return;
+
+                // Pass 1: zero out the value — key material is gone
+                //         even if the delete step is somehow blocked
+                const zeros = '\x00'.repeat(256);
+                keys.forEach(k => {
+                    try { _N.storageSetItem.call(store, k, zeros); } catch { }
+                });
+
+                // Pass 2: delete the entries
+                keys.forEach(k => {
+                    try { _N.storageRemoveItem.call(store, k); } catch { }
+                });
             } catch { /* storage access denied — skip */ }
         };
-        removeFrom(sessionStorage);
-        removeFrom(localStorage);
+        nuke(_ss);
+        nuke(_ls);
     }
 
     function _showAlert(reason) {
@@ -234,6 +264,11 @@
         // Always clear storage immediately — even if we rate-limit the UI
         _nukeStorage();
 
+        // Signal the application to lock all open containers right now.
+        // The app's main.js listens for this event and calls App.lockContainer().
+        // Safe to fire multiple times — lockContainer() is idempotent.
+        try { window.dispatchEvent(new CustomEvent('snv:lock', { detail: { reason } })); } catch { }
+
         const now = Date.now();
         if (now - _lastAlertAt < _ALERT_COOLDOWN_MS) return;
         _lastAlertAt = now;
@@ -255,43 +290,56 @@
     }
 
     /* ──────────────────────────────────────────────────────────
-       5.  Hook installation
-           Hooks are named functions so we can do reference-
-           equality checks in the watchdog.
+       5.  Hook installation — double-hook pattern
+           The real logic lives in IIFE-private _*Impl closures.
+           The publicly assigned functions are thin forwarders, so
+           fetch.toString() / XMLHttpRequest.prototype.open.toString()
+           reveals only the forwarder body — not the security logic.
+
+           _fetchImpl, _xhrOpenImpl, _sendBeaconImpl are invisible
+           from the DevTools console (closure scope, not on window).
        ────────────────────────────────────────────────────────── */
+
+    // ── Inner implementations (closure-private) ────────────────
+    const _fetchImpl = function(input) {
+        const url = (input instanceof Request) ? input.url : String(input ?? '');
+        if (_isExternal(url)) {
+            _triggerAlert('Outbound fetch blocked → ' + url);
+            return Promise.reject(new Error('[SafeNova Proactive] External fetch blocked'));
+        }
+        return _N.fetch.apply(this === window ? window : globalThis, arguments);
+    };
+
+    const _xhrOpenImpl = function(method, url) {
+        if (_isExternal(String(url ?? ''))) {
+            _triggerAlert('Outbound XHR blocked → ' + url);
+            throw new Error('[SafeNova Proactive] External XHR blocked');
+        }
+        return _N.xhrOpen.apply(this, arguments);
+    };
+
+    const _sendBeaconImpl = function(url) {
+        if (_isExternal(String(url ?? ''))) {
+            _triggerAlert('sendBeacon to external URL blocked → ' + url);
+            return false;
+        }
+        return _N.sendBeacon.apply(navigator, arguments);
+    };
+
+    // ── Publicly visible hooks (thin forwarders only) ──────────
     const _H = {}; // live hook references — checked every tick
 
     function _installHooks() {
-        // ── fetch ──────────────────────────────────────────────
-        _H.fetch = function snvFetch(input, init) {
-            const url = (input instanceof Request) ? input.url : String(input ?? '');
-            if (_isExternal(url)) {
-                _triggerAlert('Outbound fetch blocked → ' + url);
-                return Promise.reject(new Error('[SafeNova Proactive] External fetch blocked'));
-            }
-            return _N.fetch.apply(this === window ? window : globalThis, arguments);
-        };
+        // toString() on each of these shows only the one-liner forwarder.
+        // The actual check logic inside _*Impl is unreachable from outside.
+        _H.fetch = function snvFetch() { return _fetchImpl.apply(this, arguments); };
         window.fetch = _H.fetch;
 
-        // ── XMLHttpRequest.prototype.open ─────────────────────
-        _H.xhrOpen = function snvXhrOpen(method, url) {
-            if (_isExternal(String(url ?? ''))) {
-                _triggerAlert('Outbound XHR blocked → ' + url);
-                throw new Error('[SafeNova Proactive] External XHR blocked');
-            }
-            return _N.xhrOpen.apply(this, arguments);
-        };
+        _H.xhrOpen = function snvXhrOpen() { return _xhrOpenImpl.apply(this, arguments); };
         XMLHttpRequest.prototype.open = _H.xhrOpen;
 
-        // ── navigator.sendBeacon ───────────────────────────────
         if (_N.sendBeacon) {
-            _H.sendBeacon = function snvSendBeacon(url, data) {
-                if (_isExternal(String(url ?? ''))) {
-                    _triggerAlert('sendBeacon to external URL blocked → ' + url);
-                    return false;
-                }
-                return _N.sendBeacon.apply(navigator, arguments);
-            };
+            _H.sendBeacon = function snvSendBeacon() { return _sendBeaconImpl.apply(this, arguments); };
             navigator.sendBeacon = _H.sendBeacon;
         }
 

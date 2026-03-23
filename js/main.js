@@ -338,6 +338,17 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 /* ============================================================
+   SAFENOVA PROACTIVE — FORCE LOCK
+   ============================================================ */
+// Fired by daemon.js whenever a security threat is detected.
+// Lock the active container immediately so in-memory keys are cleared.
+window.addEventListener('snv:lock', () => {
+    if (typeof App !== 'undefined' && App.container) {
+        App.lockContainer();
+    }
+});
+
+/* ============================================================
    CROSS-TAB SESSION GUARD
    ============================================================ */
 // When another tab claims (or force-kicks) our container, lock immediately.
