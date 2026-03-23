@@ -1416,6 +1416,29 @@ function _askExportPassword(c) {
     });
 }
 
+/* ── Export-cache key: HKDF-SHA-256 from container salt (browser-independent, no extra storage) ── */
+async function _deriveExportCacheKey(salt) {
+    const raw = salt instanceof Uint8Array ? salt : new Uint8Array(salt);
+    const hkdf = await crypto.subtle.importKey('raw', raw, 'HKDF', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+        { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode('snv-export-cache-v1') },
+        hkdf, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+    );
+}
+async function _wrapExportCache(salt, data) {
+    const key = await _deriveExportCacheKey(salt),
+        iv = crypto.getRandomValues(new Uint8Array(12)),
+        ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data),
+        out = new Uint8Array(12 + ct.byteLength);
+    out.set(iv); out.set(new Uint8Array(ct), 12);
+    return out;
+}
+async function _unwrapExportCache(salt, data) {
+    const key = await _deriveExportCacheKey(salt),
+        iv = data.slice(0, 12), ct = data.slice(12);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct));
+}
+
 /* ── Pre-generate encrypted manifest for passwordless export ── */
 async function _updateExportCache() {
     if (!App.container || !App.key) return;
@@ -1452,7 +1475,7 @@ async function _updateExportCache() {
             mBlob: Array.from(new Uint8Array(enc.blob)),
             order
         }));
-        const wrapped = await wrapWithBrowserKey(cacheJson);
+        const wrapped = await _wrapExportCache(App.container.salt, cacheJson);
         App.container._exportCache = { wrapped: Array.from(wrapped) };
         await DB.saveContainer(App.container);
     } catch (e) {
@@ -1484,7 +1507,7 @@ async function exportContainerFile(c, requirePassword = true) {
         // Try pre-generated export cache (no key/session needed)
         if (!requirePassword && !key && c._exportCache?.wrapped) {
             try {
-                const plainBytes = await unwrapWithBrowserKey(new Uint8Array(c._exportCache.wrapped));
+                const plainBytes = await _unwrapExportCache(c.salt, new Uint8Array(c._exportCache.wrapped));
                 const cache = JSON.parse(new TextDecoder().decode(plainBytes));
                 const fileMap = new Map(fileRecs.map(r => [r.id, r]));
                 let valid = cache.order.length === fileRecs.length;
@@ -1529,6 +1552,21 @@ async function exportContainerFile(c, requirePassword = true) {
             encManifestBlob = new Uint8Array(encManifest.blob);
         }
 
+        // Rebuild export cache in IDB if setting is off but cache was absent (e.g. after password-prompted export)
+        if (c.settings?.requireExportPassword === false && !usedCache && key) {
+            try {
+                const order = fileRecs.map((f, fi) => ({ id: f.id, sz: fileChunks[fi].length }));
+                const cacheJson = new TextEncoder().encode(JSON.stringify({
+                    mIv: Array.from(encManifestIv),
+                    mBlob: Array.from(encManifestBlob),
+                    order
+                }));
+                const wrapped = await _wrapExportCache(c.salt, cacheJson);
+                c._exportCache = { wrapped: Array.from(wrapped) };
+                DB.saveContainer(c).catch(() => {}); // async — non-critical
+            } catch { /* non-critical — cache rebuilt on next lock */ }
+        }
+
         // VFS bytes → meta/0 (iv raw), meta/1 (blob raw)
         const vfsIvData = vfsRec ? new Uint8Array(vfsRec.iv) : new Uint8Array(0),
             vfsBlobData = vfsRec ? new Uint8Array(typeof vfsRec.blob === 'string' ? b642buf(vfsRec.blob) : vfsRec.blob) : new Uint8Array(0);
@@ -1564,6 +1602,7 @@ async function exportContainerFile(c, requirePassword = true) {
             { name: 'meta/3', data: encManifestBlob, mtime: now },
             { name: 'safenova_efs/workspace.bin', data: fileChunks, mtime: now },
         ];
+
         // Optionally include activity log (encrypted)
         if (c.settings?.exportWithLogs === true) {
             let alogEnc;

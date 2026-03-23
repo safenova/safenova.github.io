@@ -406,23 +406,6 @@ function hasSession(cid) {
     return !!(sessionStorage.getItem('snv-s-' + cid) || localStorage.getItem('snv-sb-' + cid));
 }
 
-/* ── Browser-wrap helpers — encrypt/decrypt arbitrary data with the 3-source browser key ── */
-async function wrapWithBrowserKey(data) {
-    const key = await _getOrCreateBrowserWrapKey(),
-        iv = crypto.getRandomValues(new Uint8Array(12)),
-        ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data),
-        out = new Uint8Array(12 + ct.byteLength);
-    out.set(iv);
-    out.set(new Uint8Array(ct), 12);
-    return out; // Uint8Array: IV(12) || CT
-}
-
-async function unwrapWithBrowserKey(data) {
-    const key = await _getOrCreateBrowserWrapKey(),
-        iv = data.slice(0, 12), ct = data.slice(12);
-    return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct));
-}
-
 /* ============================================================
    TAB SESSION GUARD
    Prevents the same container from being opened in two tabs

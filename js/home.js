@@ -192,7 +192,7 @@ const Home = {
 function showContainerMenu(e, c) {
     const hasSess = hasSession(c.id),
         isOpen = App.container && App.container.id === c.id,
-        reqExpPw = c.settings?.requireExportPassword !== false,
+        reqExpPw = c.settings?.requireExportPassword !== false || !c._exportCache?.wrapped,
         items = [];
 
     // Open — resume if session exists, otherwise go to unlock view
