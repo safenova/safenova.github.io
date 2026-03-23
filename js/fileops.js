@@ -1416,27 +1416,54 @@ function _askExportPassword(c) {
     });
 }
 
+/* ── Pre-generate encrypted manifest for passwordless export ── */
+async function _updateExportCache() {
+    if (!App.container || !App.key) return;
+    if ((App.container.settings || {}).requireExportPassword !== false) {
+        if (App.container._exportCache) {
+            delete App.container._exportCache;
+            await DB.saveContainer(App.container);
+        }
+        return;
+    }
+    try {
+        const meta = await DB.getFileMetaByCid(App.container.id);
+        let entries = meta;
+        if (meta.some(m => m.sz < 0)) {
+            const recs = await DB.getFilesByCid(App.container.id);
+            entries = recs.map(r => ({
+                id: r.id, iv: r.iv,
+                sz: r.blob instanceof ArrayBuffer ? r.blob.byteLength : (r.blob?.byteLength || 0)
+            }));
+        }
+        const order = [];
+        let offset = 0;
+        const manifest = entries.map(m => {
+            const ivArr = m.iv instanceof Array ? m.iv : Array.from(new Uint8Array(m.iv));
+            const ivB64 = btoa(String.fromCharCode(...ivArr));
+            order.push({ id: m.id, sz: m.sz });
+            const entry = { id: m.id, ivB64, offset, size: m.sz };
+            offset += m.sz;
+            return entry;
+        });
+        const enc = await Crypto.encryptBin(App.key, new TextEncoder().encode(JSON.stringify(manifest)));
+        App.container._exportCache = { mIv: enc.iv, mBlob: enc.blob, order };
+        await DB.saveContainer(App.container);
+    } catch (e) {
+        console.error('[SafeNova] Export cache generation failed:', e);
+    }
+}
+
 async function exportContainerFile(c, requirePassword = true) {
     showLoading('Exporting container…');
     try {
-        const vfsRec = await DB.getVFS(c.id),
-            fileRecs = await DB.getFilesByCid(c.id),
-            now = Date.now();
+        const vfsRec = await DB.getVFS(c.id);
+        let fileRecs = await DB.getFilesByCid(c.id);
+        const now = Date.now();
 
-        // Build file manifest — keep blobs as individual chunks (no giant single allocation)
-        const fileChunks = fileRecs.map(f => new Uint8Array(f.blob instanceof ArrayBuffer ? f.blob : f.blob));
-        let offset = 0;
-        const fileManifest = fileRecs.map((f, fi) => {
-            const ivArr = f.iv instanceof Array ? f.iv : Array.from(new Uint8Array(f.iv));
-            const ivB64 = btoa(String.fromCharCode(...ivArr));
-            const entry = { id: f.id, ivB64, offset, size: fileChunks[fi].length };
-            offset += fileChunks[fi].length;
-            return entry;
-        });
+        let key = (App.container?.id === c.id) ? App.key : null,
+            encManifestIv, encManifestBlob, usedCache = false;
 
-        // Encrypt file manifest with the container key
-        const manifestJson = JSON.stringify(fileManifest);
-        let key = (App.container?.id === c.id) ? App.key : null;
         // If the extra-confirmation setting is off, silently try the saved session
         if (!requirePassword && !key) {
             const rawKeyBytes = await loadSession(c.id);
@@ -1447,15 +1474,50 @@ async function exportContainerFile(c, requirePassword = true) {
                 } catch { /* corrupt session — will prompt below */ }
             }
         }
-        if (!key) {
+
+        // Try pre-generated export cache (no key/session needed)
+        if (!requirePassword && !key && c._exportCache) {
+            const cache = c._exportCache, fileMap = new Map(fileRecs.map(r => [r.id, r]));
+            let valid = cache.order.length === fileRecs.length;
+            if (valid) {
+                for (const o of cache.order) {
+                    const rec = fileMap.get(o.id);
+                    if (!rec) { valid = false; break; }
+                    const sz = rec.blob instanceof ArrayBuffer ? rec.blob.byteLength : (rec.blob?.byteLength || 0);
+                    if (sz !== o.sz) { valid = false; break; }
+                }
+            }
+            if (valid) {
+                fileRecs = cache.order.map(o => fileMap.get(o.id));
+                encManifestIv = new Uint8Array(cache.mIv);
+                encManifestBlob = new Uint8Array(cache.mBlob);
+                usedCache = true;
+            }
+        }
+
+        if (!usedCache && !key) {
             hideLoading();
             key = await _askExportPassword(c);
             if (!key) return;
             showLoading('Exporting container…');
         }
-        const encManifest = await Crypto.encryptBin(key, new TextEncoder().encode(manifestJson)),
-            encManifestIv = new Uint8Array(encManifest.iv),
+
+        // Build file data — keep blobs as individual chunks (no giant single allocation)
+        const fileChunks = fileRecs.map(f => new Uint8Array(f.blob instanceof ArrayBuffer ? f.blob : f.blob));
+
+        if (!usedCache) {
+            let offset = 0;
+            const fileManifest = fileRecs.map((f, fi) => {
+                const ivArr = f.iv instanceof Array ? f.iv : Array.from(new Uint8Array(f.iv));
+                const ivB64 = btoa(String.fromCharCode(...ivArr));
+                const entry = { id: f.id, ivB64, offset, size: fileChunks[fi].length };
+                offset += fileChunks[fi].length;
+                return entry;
+            });
+            const encManifest = await Crypto.encryptBin(key, new TextEncoder().encode(JSON.stringify(fileManifest)));
+            encManifestIv = new Uint8Array(encManifest.iv);
             encManifestBlob = new Uint8Array(encManifest.blob);
+        }
 
         // VFS bytes → meta/0 (iv raw), meta/1 (blob raw)
         const vfsIvData = vfsRec ? new Uint8Array(vfsRec.iv) : new Uint8Array(0),

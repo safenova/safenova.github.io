@@ -370,6 +370,7 @@ async function doChangePassword() {
         c.salt = newSalt;
         c.verIv = verIv;
         c.verBlob = verBlob;
+        delete c._exportCache;
         await DB.saveContainer(c);
 
         // Clear any stored sessions (password changed)

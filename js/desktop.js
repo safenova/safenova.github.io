@@ -670,6 +670,7 @@ function openSettings() {
     document.querySelector('#settings-export-pw input').onchange = async function () {
         const ns = { ..._getSettings(), requireExportPassword: this.checked };
         await _saveSettings(ns);
+        if (typeof _updateExportCache === 'function') await _updateExportCache();
     };
     // Bind activity logs toggle
     const alogToggle = document.querySelector('#settings-activity-logs-toggle input'),

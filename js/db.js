@@ -133,7 +133,7 @@ const DB = (() => {
                     tx = _db.transaction(['files', 'chunks'], 'readwrite'),
                     fs = tx.objectStore('files'),
                     cs = tx.objectStore('chunks');
-                fs.put({ id: f.id, cid: f.cid, iv: f.iv, blob: null, _chunked: chunkCount });
+                fs.put({ id: f.id, cid: f.cid, iv: f.iv, blob: null, _chunked: chunkCount, _blobSize: blobSize });
                 for (let i = 0; i < chunkCount; i++) {
                     const start = i * FILE_CHUNK_SIZE;
                     cs.put({ id: f.id + '_' + i, data: f.blob.slice(start, Math.min(start + FILE_CHUNK_SIZE, blobSize)) });
@@ -174,6 +174,25 @@ const DB = (() => {
             if (chunked.length) await Promise.all(chunked.map(r => _reassemble(r)));
             return recs;
         },
+        // Lightweight: returns [{id, iv, sz}] without chunk reassembly
+        getFileMetaByCid: (cid) => new Promise((resolve, reject) => {
+            const tx = _db.transaction('files', 'readonly'),
+                idx = tx.objectStore('files').index('cid'),
+                req = idx.openCursor(IDBKeyRange.only(cid)),
+                results = [];
+            req.onsuccess = () => {
+                const c = req.result;
+                if (c) {
+                    const r = c.value;
+                    results.push({
+                        id: r.id, iv: r.iv,
+                        sz: r._chunked ? (r._blobSize ?? -1) : (r.blob ? (r.blob.byteLength || 0) : 0)
+                    });
+                    c.continue();
+                } else resolve(results);
+            };
+            req.onerror = () => reject(req.error);
+        }),
         deleteFile: async (id) => {
             let chunked = 0;
             try { const rec = await wrap(ro('files').get(id)); if (rec?._chunked) chunked = rec._chunked; }
@@ -228,7 +247,7 @@ const DB = (() => {
                 const blobSize = f.blob ? (f.blob.byteLength ?? 0) : 0;
                 if (blobSize > FILE_CHUNK_SIZE) {
                     const chunkCount = Math.ceil(blobSize / FILE_CHUNK_SIZE);
-                    fileStore.put({ id: f.id, cid: f.cid, iv: f.iv, blob: null, _chunked: chunkCount });
+                    fileStore.put({ id: f.id, cid: f.cid, iv: f.iv, blob: null, _chunked: chunkCount, _blobSize: blobSize });
                     for (let i = 0; i < chunkCount; i++) {
                         const start = i * FILE_CHUNK_SIZE;
                         chunkStore.put({ id: f.id + '_' + i, data: f.blob.slice(start, Math.min(start + FILE_CHUNK_SIZE, blobSize)) });

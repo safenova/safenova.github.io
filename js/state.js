@@ -506,6 +506,7 @@ const App = {
 
     // Return to home WITHOUT killing the session (password stays remembered)
     async backToMenu() {
+        if (typeof _updateExportCache === 'function') await _updateExportCache();
         document.title = 'SafeNova';
         if (this.container?.id) _stopContainerSession(this.container.id);
         this.key = null;
