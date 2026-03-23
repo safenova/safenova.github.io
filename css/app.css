@@ -1978,7 +1978,9 @@ input[type="password"]::-ms-clear {
     cursor: pointer;
     flex-shrink: 0;
     position: relative;
-    transition: background var(--transition), border-color var(--transition);
+    transition:
+        background var(--transition),
+        border-color var(--transition);
 }
 .remember-row input[type="checkbox"]:hover {
     border-color: var(--accent-h);
@@ -1988,7 +1990,7 @@ input[type="password"]::-ms-clear {
     border-color: var(--accent);
 }
 .remember-row input[type="checkbox"]:checked::after {
-    content: '';
+    content: "";
     position: absolute;
     left: 3px;
     top: 1px;
@@ -2047,7 +2049,7 @@ input[type="password"]::-ms-clear {
     border-color: var(--accent-h);
 }
 .remember-opt input[type="radio"]::after {
-    content: '';
+    content: "";
     position: absolute;
     top: 50%;
     left: 50%;
@@ -2522,7 +2524,7 @@ input[type="password"]::-ms-clear {
 /* Stats */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 10px;
 }
 .stats-card {
@@ -2535,9 +2537,12 @@ input[type="password"]::-ms-clear {
     gap: 4px;
 }
 .stats-card-value {
-    font-size: 20px;
+    font-size: 17px;
     font-weight: 600;
     color: var(--text-bright);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .stats-card-label {
     font-size: 11px;
@@ -2572,12 +2577,12 @@ input[type="password"]::-ms-clear {
     flex: 1;
     height: 8px;
     background: var(--bg4);
-    border-radius: 4px;
+    border-radius: var(--r);
     overflow: hidden;
 }
 .stats-bar-row-fill {
     height: 100%;
-    border-radius: 4px;
+    border-radius: var(--r);
     transition: width 0.4s ease;
 }
 .stats-bar-row-pct {
@@ -2585,17 +2590,31 @@ input[type="password"]::-ms-clear {
     font-size: 11px;
     color: var(--text-dim);
 }
+.stats-bar-row-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    width: 52px;
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
+}
+.stats-bar-row-meta-size {
+    font-size: 10px;
+    opacity: 0.65;
+}
 .stats-storage-bar {
     height: 14px;
     background: var(--bg4);
-    border-radius: 7px;
+    border-radius: var(--r);
     overflow: hidden;
     position: relative;
 }
 .stats-storage-fill {
     height: 100%;
-    border-radius: 7px;
-    background: linear-gradient(90deg, var(--accent), #5aadff);
+    border-radius: var(--r);
+    background: var(--accent);
     transition: width 0.4s ease;
 }
 .stats-storage-text {
@@ -2608,6 +2627,49 @@ input[type="password"]::-ms-clear {
     color: #fff;
     font-weight: 600;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.stats-storage-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 5px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.stats-top-files {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.stats-top-file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    min-width: 0;
+}
+.stats-top-file-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--r);
+    flex-shrink: 0;
+}
+.stats-top-file-name {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.stats-top-file-size {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: var(--mono);
 }
 
 /* ============================================================
@@ -2751,7 +2813,10 @@ input[type="password"]::-ms-clear {
     user-select: text;
     margin-top: 1px;
 }
-.alog-path-chip:hover { color: var(--text); border-color: var(--border2); }
+.alog-path-chip:hover {
+    color: var(--text);
+    border-color: var(--border2);
+}
 .alog-paths {
     display: flex;
     align-items: center;

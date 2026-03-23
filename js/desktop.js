@@ -1213,13 +1213,14 @@ function _showRepairConfirm() {
 }
 
 
-const STATS_COLORS = ['#0078d4', '#e74856', '#16c60c', '#f9f1a5', '#b4009e', '#00b7c3', '#ff8c00', '#e3008c'];
+const STATS_COLORS = ['#569cd6', '#4ec9b0', '#ce9178', '#c586c0', '#6a9955', '#dcdcaa', '#9cdcfe', '#d7ba7d'];
 
 function _renderStats() {
-    const deskFid = Desktop._desktopFolder;
     // Gather all nodes recursively
     let totalFiles = 0, totalFolders = 0, totalSize = 0;
-    const typeCounts = {};
+    const typeCounts = {}, typeSizes = {};
+    let largestSize = 0, largestName = '';
+    const allFiles = [];
     function walk(pid) {
         VFS.children(pid).forEach(n => {
             if (n.type === 'folder') {
@@ -1227,50 +1228,83 @@ function _renderStats() {
                 walk(n.id);
             } else {
                 totalFiles++;
-                totalSize += n.size || 0;
+                const sz = n.size || 0;
+                totalSize += sz;
                 const ext = n.name.includes('.') ? n.name.split('.').pop().toLowerCase() : 'other';
                 typeCounts[ext] = (typeCounts[ext] || 0) + 1;
+                typeSizes[ext] = (typeSizes[ext] || 0) + sz;
+                allFiles.push({ name: n.name, size: sz, ext });
+                if (sz > largestSize) { largestSize = sz; largestName = n.name; }
             }
         });
     }
     walk('root');
-    // Stats cards
+
+    // ── Stats cards (3×2) ────────────────────────────────────
     const grid = document.getElementById('stats-grid');
     grid.innerHTML = '';
+    const _shortDate = ts => ts ? new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
     const cards = [
-        { value: totalFiles, label: 'Files' },
-        { value: totalFolders, label: 'Folders' },
+        { value: totalFiles.toLocaleString(), label: 'Files' },
+        { value: totalFolders.toLocaleString(), label: 'Folders' },
         { value: fmtSize(totalSize), label: 'Total Size' },
-        { value: fmtDate(App.container?.createdAt), label: 'Created' },
+        { value: totalFiles ? fmtSize(Math.round(totalSize / totalFiles)) : '—', label: 'Avg File Size' },
+        { value: largestSize ? fmtSize(largestSize) : '—', label: largestSize ? (largestName.length > 18 ? largestName.slice(0, 17) + '\u2026' : largestName) : 'Largest File' },
+        { value: _shortDate(App.container?.createdAt), label: 'Created' },
     ];
     cards.forEach(c => {
         const card = document.createElement('div'); card.className = 'stats-card';
         card.innerHTML = `<span class="stats-card-value">${escHtml(String(c.value))}</span><span class="stats-card-label">${escHtml(c.label)}</span>`;
         grid.appendChild(card);
     });
-    // File type bar chart (top 6)
+
+    // ── File type bar chart (top 6) ──────────────────────────
     const chart = document.getElementById('stats-bar-chart');
     chart.innerHTML = '';
     const sorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).slice(0, 6),
         maxCount = sorted.length ? sorted[0][1] : 1;
     sorted.forEach(([ext, count], i) => {
-        const pct = Math.round(count / totalFiles * 100);
         const row = document.createElement('div'); row.className = 'stats-bar-row';
         row.innerHTML =
             `<span class="stats-bar-row-label">.${escHtml(ext)}</span>` +
             `<div class="stats-bar-row-track"><div class="stats-bar-row-fill" style="width:${Math.round(count / maxCount * 100)}%;background:${STATS_COLORS[i % STATS_COLORS.length]}"></div></div>` +
-            `<span class="stats-bar-row-pct">${pct}%</span>`;
+            `<span class="stats-bar-row-meta"><span>${count}</span><span class="stats-bar-row-meta-size">${fmtSize(typeSizes[ext] || 0)}</span></span>`;
         chart.appendChild(row);
     });
     if (!sorted.length) chart.innerHTML = '<span style="font-size:12px;color:var(--text-dim)">No files yet</span>';
-    // Storage bar
+
+    // ── Storage bar ──────────────────────────────────────────
     const storBar = document.getElementById('stats-storage-bar'),
-        used = App.container?.totalSize || 0,
-        limit = 500 * 1024 * 1024, // 500MB display cap
-        pctUsed = Math.min(100, Math.round(used / limit * 100));
+        storLabels = document.getElementById('stats-storage-labels'),
+        pctUsed = Math.min(100, Math.round(totalSize / CONTAINER_LIMIT * 100)),
+        fillColor = pctUsed >= 90 ? 'var(--red)' : pctUsed >= 75 ? '#e8a020' : 'linear-gradient(90deg, var(--accent), #5aadff)';
     storBar.innerHTML =
-        `<div class="stats-storage-fill" style="width:${pctUsed}%"></div>` +
-        `<span class="stats-storage-text">${fmtSize(used)} used</span>`;
+        `<div class="stats-storage-fill" style="width:${pctUsed}%;background:${fillColor}"></div>` +
+        `<span class="stats-storage-text">${pctUsed}%</span>`;
+    if (storLabels) {
+        storLabels.innerHTML =
+            `<span>${fmtSize(totalSize)} used</span>` +
+            `<span>${fmtSize(Math.max(0, CONTAINER_LIMIT - totalSize))} free of ${fmtSize(CONTAINER_LIMIT)}</span>`;
+    }
+
+    // ── Top 5 largest files ──────────────────────────────────
+    const topEl = document.getElementById('stats-top-files');
+    if (topEl) {
+        topEl.innerHTML = '';
+        const top5 = allFiles.sort((a, b) => b.size - a.size).slice(0, 5);
+        if (!top5.length) {
+            topEl.innerHTML = '<span style="font-size:12px;color:var(--text-dim)">No files yet</span>';
+        } else {
+            top5.forEach((f, i) => {
+                const row = document.createElement('div'); row.className = 'stats-top-file';
+                row.innerHTML =
+                    `<span class="stats-top-file-dot" style="background:${STATS_COLORS[i % STATS_COLORS.length]}"></span>` +
+                    `<span class="stats-top-file-name" title="${escHtml(f.name)}">${escHtml(f.name)}</span>` +
+                    `<span class="stats-top-file-size">${fmtSize(f.size)}</span>`;
+                topEl.appendChild(row);
+            });
+        }
+    }
 }
 
 /* ============================================================
