@@ -56,6 +56,7 @@ body {
 }
 
 /* ---- SCROLLBAR ---- */
+/* WebKit (Chrome, Edge, Safari) */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -69,6 +70,11 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
     background: var(--border2);
+}
+/* Firefox — scrollbar-width / scrollbar-color (standard W3C spec) */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg5) var(--bg2);
 }
 
 /* ---- VIEWS ---- */
@@ -321,6 +327,12 @@ html.snv-doc-hidden #home-doc-tab {
     position: relative;
     overflow: hidden;
     min-height: 136px;
+    /* Establish a GPU compositing layer at rest so that the :active scale(0.99)
+       fires on an already-promoted layer. Without this, Firefox promotes the
+       layer mid-animation which causes a one-frame sub-pixel text reposition
+       (the visible "jump" in the inspector at 112.39 × 35 px). */
+    will-change: transform;
+    backface-visibility: hidden;
 }
 .container-card:hover {
     border-color: var(--accent);
@@ -1249,6 +1261,11 @@ body.no-animations * {
     display: flex;
     flex-direction: column;
     max-height: 90vh;
+    /* Keeps the element on a GPU compositing layer for the full animation
+       lifetime, preventing the sub-pixel text jump visible in Firefox
+       when the compositor layer is promoted/demoted mid-animation. */
+    will-change: transform;
+    backface-visibility: hidden;
 }
 .modal-overlay.show .modal {
     transform: scale(1) translateY(0);
@@ -3339,6 +3356,11 @@ input[type="password"]::-ms-clear {
         transition:
             transform 0.18s ease,
             opacity 0.18s ease;
+        /* Ensure a stable compositing layer for the entire animation so that
+           text inside does not snap/jump at the end of the enter transition
+           (Firefox sub-pixel GPU layer promotion artefact). */
+        will-change: transform, opacity;
+        backface-visibility: hidden;
     }
     .topbar-dropdown.open {
         transform: translateY(0);

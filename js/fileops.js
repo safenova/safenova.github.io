@@ -1533,7 +1533,7 @@ async function _updateExportCache(generateNow = false, silent = false) {
    passwordless-export setting is active. Fire-and-forget; never throws. ── */
 function _scheduleExportCacheRefresh() {
     if ((App.container?.settings || {}).requireExportPassword !== false) return;
-    _updateExportCache(false, true).catch(() => {});
+    _updateExportCache(false, true).catch(() => { });
 }
 
 /* ── Remove orphaned export cache: cache stored in IDB but setting was never

@@ -302,7 +302,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     // SafeNova Proactive must be loaded and active before the app starts.
     // daemon.js is injected in <head> before all other scripts; if it
     // failed to load for any reason the guard token will be absent.
-    if (!window.__snvGuard?.active) {
+    // v4: __snvVerify() does canary cross-check (guards against pre-defined __snvGuard).
+    // Legacy fallback: if __snvVerify is absent (v3), fall back to __snvGuard.active alone.
+    const _snvOk = typeof window.__snvVerify === 'function'
+        ? window.__snvVerify() === true
+        : window.__snvGuard?.active === true;
+    if (!_snvOk) {
         const ol = document.getElementById('loading-overlay');
         if (ol) {
             ol.innerHTML = `
@@ -354,12 +359,43 @@ window.addEventListener('DOMContentLoaded', async () => {
    SAFENOVA PROACTIVE — FORCE LOCK
    ============================================================ */
 // Fired by daemon.js whenever a security threat is detected.
-// Lock the active container immediately so in-memory keys are cleared.
+// F2: Call __snvEmergencyLock first — directly nukes storage and zeroes app state
+// regardless of whether App.lockContainer was patched. Then also try lockContainer
+// for full UI cleanup (close file editor, show lock screen).
 window.addEventListener('snv:lock', () => {
+    try { window.__snvEmergencyLock?.(); } catch { }
     if (typeof App !== 'undefined' && App.container) {
         App.lockContainer();
     }
 });
+
+/* ============================================================
+   SAFENOVA PROACTIVE — DEAD MAN'S SWITCH  (C1)
+   ============================================================ */
+// daemon.js dispatches 'snv:alive' every watchdog tick (~1 s).
+// If the heartbeat goes silent for >3 s the watchdog was killed —
+// lock all containers immediately so keys are not left in memory.
+(() => {
+    let _lastAlive = Date.now(), _lastHbN = 0;
+    window.addEventListener('snv:alive', e => {
+        // Only accept events with a strictly increasing monotonic counter (E5).
+        // An attacker faking snv:alive events cannot know the current count from the daemon closure.
+        const n = e?.detail?.n;
+        if (typeof n === 'number' && n > _lastHbN) {
+            _lastHbN = n;
+            _lastAlive = Date.now();
+        }
+    });
+    setInterval(() => {
+        if (Date.now() - _lastAlive > 3000 && typeof App !== 'undefined' && App.container) {
+            // F2: __snvEmergencyLock nukes storage and zeroes app state directly,
+            // bypassing a patched App.lockContainer. Then still try lockContainer
+            // for UI cleanup (close editor, show lock screen).
+            try { window.__snvEmergencyLock?.(); } catch { }
+            App.lockContainer();
+        }
+    }, 1000);
+})();
 
 /* ============================================================
    CROSS-TAB SESSION GUARD

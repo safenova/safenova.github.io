@@ -878,7 +878,7 @@ async function doUnlock() {
         if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
         if (typeof _resetAutoLockTimer === 'function') _resetAutoLockTimer();
         Desktop.render();
-        if (typeof _cleanOrphanedExportCache === 'function') _cleanOrphanedExportCache().catch(() => {});
+        if (typeof _cleanOrphanedExportCache === 'function') _cleanOrphanedExportCache().catch(() => { });
         toast(`Container "${c.name}" unlocked`, 'success');
         // Save or clear session based on checkbox — uses rawKey already derived above (no second Argon2)
         const remEl = document.getElementById('unlock-remember');
@@ -988,7 +988,7 @@ async function _resumeSession(c, rawKeyBytes) {
         if (typeof _applySettings === 'function') _applySettings(_getSettings(), true);
         if (typeof _resetAutoLockTimer === 'function') _resetAutoLockTimer();
         Desktop.render();
-        if (typeof _cleanOrphanedExportCache === 'function') _cleanOrphanedExportCache().catch(() => {});
+        if (typeof _cleanOrphanedExportCache === 'function') _cleanOrphanedExportCache().catch(() => { });
         toast(`Session for "${c.name}" restored`, 'success');
     } catch (e) {
         hideLoading();
