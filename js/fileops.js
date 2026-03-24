@@ -115,6 +115,11 @@ async function _uploadFileEntry(fileEntry, targetFolderId) {
         _uploadLimitHit = true;
         return false;
     }
+    const spCheck = await checkStorageSpace(file.size * 1.1);
+    if (!spCheck.ok) {
+        _uploadDeviceFullHit = true;
+        return false;
+    }
     const buf = await file.arrayBuffer(),
         mime = file.type || getMime(name),
         { iv, blob } = await Crypto.encryptBin(App.key, buf),
@@ -155,6 +160,7 @@ async function _uploadDirEntry(dirEntry, targetFolderId, depth) {
 }
 
 let _uploadLimitHit = false;
+let _uploadDeviceFullHit = false;
 
 // Main drop entry point for desktop and folder-window drop events.
 // Accepts DataTransferItemList (supports both files and folders).
@@ -163,6 +169,7 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
     const itemArr = Array.from(dataTransferItems || []);
     if (!itemArr.length) return;
     _uploadLimitHit = false;
+    _uploadDeviceFullHit = false;
 
     const entries = itemArr.map(i => i.webkitGetAsEntry?.()).filter(Boolean);
     if (!entries.length) {
@@ -205,6 +212,7 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
         _scheduleExportCacheRefresh();
     }
     if (_uploadLimitHit) toast(`Container is full (${fmtSize(CONTAINER_LIMIT)}) — some files were not imported`, 'error');
+    if (_uploadDeviceFullHit) toast('Not enough device storage — some files were not imported', 'error');
 }
 
 /* ============================================================
@@ -895,6 +903,14 @@ async function saveEditor() {
 
     const text = document.getElementById('editor-textarea').value;
     const buf = new TextEncoder().encode(text);
+    // Container limit check: compare projected total against CONTAINER_LIMIT.
+    // VFS.totalSize() still contains the old size for this node at this point.
+    const _oldSize = _editorNode.size || 0;
+    const _delta = buf.byteLength - _oldSize;
+    if (_delta > 0 && VFS.totalSize() + _delta > CONTAINER_LIMIT) {
+        toast(`Cannot save: container limit reached (${fmtSize(CONTAINER_LIMIT)})`, 'error');
+        return;
+    }
     const needed = buf.byteLength * 1.1;
     const spCheck = await checkStorageSpace(needed);
     if (!spCheck.ok) {
