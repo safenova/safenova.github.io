@@ -80,9 +80,35 @@ const DB = (() => {
         });
     }
 
-    // Pre-deletion corruption: overwrite the first 8 bytes of every encrypted blob with zeros.
-    // This ensures ciphertext is irrecoverable even if the storage engine doesn't
-    // immediately reclaim the underlying pages. Best-effort — always resolves so deletion proceeds.
+    // Returns 2 distinct non-adjacent random indices within [0, size).
+    // Falls back gracefully for very small buffers.
+    function _twoRandPos(size) {
+        if (size < 2) return size ? [0] : [];
+        if (size < 4) return [0, size - 1]; // small buffer — take ends
+        const a = Math.floor(Math.random() * size);
+        let b;
+        do { b = Math.floor(Math.random() * size); } while (Math.abs(b - a) <= 1);
+        return [a, b];
+    }
+
+    // XOR-flips 2 random non-adjacent bytes in the buffer with a random non-zero value.
+    // Position and delta are unknown and unreproducible — guaranteed to change each byte.
+    function _corruptRandBytes(buf) {
+        if (!buf || buf.byteLength < 1) return;
+        const arr = new Uint8Array(buf);
+        for (const p of _twoRandPos(arr.length)) {
+            arr[p] ^= (Math.floor(Math.random() * 255) + 1);
+        }
+    }
+
+    // Cryptographic pre-shredding — makes every encrypted blob irrecoverable:
+    //   • Inline files : XOR-flip 2 random non-adjacent bytes in the ciphertext.
+    //     Any 1-byte change in AES-GCM ciphertext causes GCM auth-tag failure
+    //     for the entire file. Position and XOR delta are unknown and unlogged.
+    //   • Chunked files: zero the IV stored in the file record — no chunk data
+    //     is read at all, making this path maximally fast for large files.
+    //     Without a valid IV, AES-GCM decryption cannot even begin.
+    // Best-effort — always resolves so deletion / duress flow can continue.
     function _corruptFileBlobs(ids) {
         return new Promise((resolve) => {
             if (!ids.length) { resolve(); return; }
@@ -96,20 +122,15 @@ const DB = (() => {
                 const req = fs.get(id);
                 req.onsuccess = () => {
                     const rec = req.result;
-                    if (rec?._chunked) {
-                        // Large file: corrupt first 8 bytes of the first chunk
-                        const cr = cs.get(id + '_0');
-                        cr.onsuccess = () => {
-                            const chunk = cr.result;
-                            if (chunk?.data) {
-                                new Uint8Array(chunk.data, 0, Math.min(8, chunk.data.byteLength)).fill(0);
-                                cs.put(chunk);
-                            }
-                        };
-                        cr.onerror = (e) => e.preventDefault();
-                    } else if (rec?.blob) {
-                        // Inline file: corrupt first 8 bytes of the blob
-                        new Uint8Array(rec.blob, 0, Math.min(8, rec.blob.byteLength)).fill(0);
+                    if (!rec) return;
+                    if (rec._chunked) {
+                        // Large file: zero the IV — avoids reading any chunk data entirely.
+                        // AES-GCM without a valid IV is unconditionally undecryptable.
+                        if (rec.iv) new Uint8Array(rec.iv instanceof ArrayBuffer ? rec.iv : rec.iv.buffer).fill(0);
+                        fs.put(rec);
+                    } else if (rec.blob) {
+                        // Inline file: XOR-flip 2 random non-adjacent bytes in the ciphertext.
+                        _corruptRandBytes(rec.blob);
                         fs.put(rec);
                     }
                 };
@@ -309,7 +330,7 @@ const DB = (() => {
                 req.onerror = () => reject(req.error);
             });
             if (ids.length) {
-                await _corruptFileBlobs(ids); // zero-overwrite first 8 bytes of each encrypted blob
+                await _corruptFileBlobs(ids); // XOR-flip 2 random bytes (inline) / zero IV (chunked)
                 await this.deleteFiles(ids);
             }
             await this.deleteVFS(cid);

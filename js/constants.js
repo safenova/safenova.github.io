@@ -85,7 +85,11 @@ function getMime(name) {
         pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf',
         arj: 'application/x-arj', dbf: 'application/x-dbf',
-        so: 'application/x-sharedlib'
+        so: 'application/x-sharedlib',
+        arj: 'application/x-arj', dbf: 'application/x-dbf',
+        so: 'application/x-sharedlib',
+        deb: 'application/vnd.debian.binary-package',
+        iso: 'application/x-compressed-iso',
     })[e] || 'application/octet-stream';
 }
 
@@ -242,13 +246,13 @@ function getFileIconSVG(mime, name) {
     if (isVideo(mime)) return _bigIcon('#c678dd', _videoPath());
     if (isPDF(mime)) return _bigIcon('#f44747', _pdfPath());
     if (isText(mime, name)) {
-        if (['js', 'ts', 'py', 'rs', 'go', 'java', 'c', 'cmd', 'cpp', 'cs', 'php', 'rb', 'sh', 'bat'].includes(ext))
+        if (['js', 'ts', 'py', 'rs', 'go', 'java', 'c', 'cmd', 'cpp', 'cs', 'php', 'rb', 'sh', 'bat', 'ps1', 'vbs'].includes(ext))
             return _bigIcon('#dcdcaa', _codePath());
         if (['json', 'yaml', 'yml', 'xml', 'csv'].includes(ext))
             return _bigIcon('#4ec9b0', _dataPath());
         return _bigIcon('#d4d4d4', _textPath());
     }
-    if (['zip', 'rar', 'gz', '7z', 'tar', 'stk', 'itk', 'ltk', 'jtk', 'arj'].includes(ext)) return _bigIcon('#ce9178', _archivePath());
+    if (['zip', 'rar', 'gz', '7z', 'tar', 'stk', 'itk', 'ltk', 'jtk', 'arj', 'deb', 'iso'].includes(ext)) return _bigIcon('#ce9178', _archivePath());
     if (['doc', 'docx', 'odt', 'rtf'].includes(ext)) return _bigIcon('#569cd6', _docPath());
     if (['xls', 'xlsx'].includes(ext)) return _bigIcon('#4ec9b0', _dataPath());
     if (['ppt', 'pptx'].includes(ext)) return _bigIcon('#ce9178', _slidePath());
