@@ -479,7 +479,36 @@ function renameNode(node) {
         const _oldName = node.name;
         VFS.rename(node.id, newName);
         await saveVFS();
-        if (capturedWinCtx) capturedWinCtx.render(); else Desktop._patchIcons();
+
+        // Patch only the affected icon(s) in-place — no full desktop re-render needed.
+        // node.mime was already updated by VFS.rename; recompute for the thumb.
+        const _patchIconEl = (el) => {
+            if (!el) return;
+            const nameEl = el.querySelector('.file-name');
+            if (nameEl) nameEl.textContent = newName;
+            if (node.type === 'file') {
+                const newMime = node.mime || getMime(newName);
+                const thumb = el.querySelector('.file-thumb');
+                if (thumb) {
+                    // If extension changed to a non-image type, drop the thumbnail cache
+                    if (!isImage(newMime) && App.thumbCache[node.id]) {
+                        delete App.thumbCache[node.id];
+                    }
+                    if (App.thumbCache[node.id]) {
+                        const img = document.createElement('img');
+                        img.src = App.thumbCache[node.id];
+                        img.draggable = false;
+                        thumb.innerHTML = '';
+                        thumb.appendChild(img);
+                    } else {
+                        thumb.innerHTML = getFileIconSVG(newMime, newName);
+                        if (isImage(newMime)) _enqueueThumb(node);
+                    }
+                }
+            }
+        };
+        document.querySelectorAll(`.file-item[data-id="${node.id}"]`).forEach(_patchIconEl);
+
         logActivity('rename', `${_oldName} → ${newName}`, 1, VFS.fullPath(node.id));
     };
 }

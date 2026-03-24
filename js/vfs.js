@@ -113,7 +113,16 @@ const VFS = (() => {
     }
 
     function rename(id, newName) {
-        if (id !== 'root' && _nodes[id]) { _nodes[id].name = newName; _nodes[id].mtime = Date.now(); }
+        const n = _nodes[id];
+        if (id !== 'root' && n) {
+            n.name = newName;
+            n.mtime = Date.now();
+            // Refresh mime when the file extension changes so icon and viewer
+            // reflect the new type rather than the original upload type.
+            if (n.type === 'file' && typeof getMime === 'function') {
+                n.mime = getMime(newName);
+            }
+        }
     }
 
     function move(id, newParentId) {
