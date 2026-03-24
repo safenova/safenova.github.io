@@ -1441,26 +1441,36 @@ async function _unwrapExportCache(salt, data) {
     return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct));
 }
 
-/* ── Pre-generate encrypted manifest for passwordless export ── */
-async function _updateExportCache() {
-    if (!App.container || !App.key) return;
-    if ((App.container.settings || {}).requireExportPassword !== false) {
+/* ── Pre-generate encrypted manifest for passwordless export ──
+   generateNow=true bypasses the saved-settings check — used when the toggle
+   was just switched but the new value hasn't been written to IDB yet.
+   Returns true on success, false on failure. */
+async function _updateExportCache(generateNow = false) {
+    if (!App.container || !App.key) return false;
+    const shouldGenerate = generateNow || (App.container.settings || {}).requireExportPassword === false;
+    if (!shouldGenerate) {
+        // password is (or will be) required — clear any stale cache
         if (App.container._exportCache) {
             delete App.container._exportCache;
             await DB.saveContainer(App.container);
         }
-        return;
+        return true;
     }
+    const _setMsg = msg => { document.getElementById('loading-msg').textContent = msg; };
+    showLoading('Generating export cache database…');
     try {
+        _setMsg('Export cache: reading file list…');
         const meta = await DB.getFileMetaByCid(App.container.id);
         let entries = meta;
         if (meta.some(m => m.sz < 0)) {
+            _setMsg('Export cache: loading file data…');
             const recs = await DB.getFilesByCid(App.container.id);
             entries = recs.map(r => ({
                 id: r.id, iv: r.iv,
                 sz: r.blob instanceof ArrayBuffer ? r.blob.byteLength : (r.blob?.byteLength || 0)
             }));
         }
+        _setMsg(`Export cache: building manifest (${entries.length} file${entries.length === 1 ? '' : 's'})…`);
         const order = [];
         let offset = 0;
         const manifest = entries.map(m => {
@@ -1471,7 +1481,9 @@ async function _updateExportCache() {
             offset += m.sz;
             return entry;
         });
+        _setMsg('Export cache: encrypting manifest…');
         const enc = await Crypto.encryptBin(App.key, new TextEncoder().encode(JSON.stringify(manifest)));
+        _setMsg('Export cache: saving to database…');
         const cacheJson = new TextEncoder().encode(JSON.stringify({
             mIv: enc.iv,
             mBlob: Array.from(new Uint8Array(enc.blob)),
@@ -1480,8 +1492,27 @@ async function _updateExportCache() {
         const wrapped = await _wrapExportCache(App.container.salt, cacheJson);
         App.container._exportCache = { wrapped: Array.from(wrapped) };
         await DB.saveContainer(App.container);
+        return true;
     } catch (e) {
         console.error('[SafeNova] Export cache generation failed:', e);
+        // Clean up any partial cache that may have been written before the failure
+        if (App.container._exportCache) {
+            delete App.container._exportCache;
+            try { await DB.saveContainer(App.container); } catch { /* non-critical */ }
+        }
+        return false;
+    } finally {
+        hideLoading();
+    }
+}
+
+/* ── Remove orphaned export cache: cache stored in IDB but setting was never
+   saved (e.g. app crashed mid-generation). Called on every container open. ── */
+async function _cleanOrphanedExportCache() {
+    if (!App.container) return;
+    if ((App.container.settings || {}).requireExportPassword !== false && App.container._exportCache) {
+        delete App.container._exportCache;
+        try { await DB.saveContainer(App.container); } catch { /* non-critical */ }
     }
 }
 

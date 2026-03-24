@@ -668,9 +668,26 @@ function openSettings() {
     // Bind require export password
     document.querySelector('#settings-export-pw input').checked = s.requireExportPassword !== false;
     document.querySelector('#settings-export-pw input').onchange = async function () {
-        const ns = { ..._getSettings(), requireExportPassword: this.checked };
-        await _saveSettings(ns);
-        if (typeof _updateExportCache === 'function') await _updateExportCache();
+        if (!this.checked) {
+            // Disabling password — build export cache first; save setting only on success
+            this.disabled = true;
+            const ok = typeof _updateExportCache === 'function'
+                ? await _updateExportCache(true)
+                : false;
+            this.disabled = false;
+            if (ok) {
+                const ns = { ..._getSettings(), requireExportPassword: false };
+                await _saveSettings(ns);
+            } else {
+                this.checked = true; // revert toggle
+                toast('Failed to generate export cache — setting not changed', 'error');
+            }
+        } else {
+            // Re-enabling password requirement — save immediately and clear any existing cache
+            const ns = { ..._getSettings(), requireExportPassword: true };
+            await _saveSettings(ns);
+            if (typeof _updateExportCache === 'function') await _updateExportCache();
+        }
     };
     // Bind duress password toggle + inline form
     const duressCb = document.getElementById('settings-duress-cb'),
