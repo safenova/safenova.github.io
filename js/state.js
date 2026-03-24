@@ -507,6 +507,10 @@ const App = {
     // Return to home WITHOUT killing the session (password stays remembered)
     async backToMenu() {
         document.title = 'SafeNova';
+        // Close any open file preview or editor so decrypted data is not left visible
+        if (typeof closeViewer === 'function') closeViewer();
+        if (typeof discardEditor === 'function') discardEditor();
+        Overlay.hide();
         if (this.container?.id) _stopContainerSession(this.container.id);
         this.key = null;
         this.container = null;
@@ -529,6 +533,11 @@ const App = {
 
     async lockContainer() {
         document.title = 'SafeNova';
+        const cname = this.container?.name ?? null;
+        // Close any open file preview or editor — critical: clears decrypted content from DOM
+        if (typeof closeViewer === 'function') closeViewer();
+        if (typeof discardEditor === 'function') discardEditor();
+        Overlay.hide();
         const cid = this.container?.id;
         if (cid) { _stopContainerSession(cid); clearSession(cid); }
         this.key = null;
@@ -541,7 +550,6 @@ const App = {
         // Close all open folder windows
         if (typeof WinManager !== 'undefined') WinManager.closeAll();
         if (typeof _resetContainerSettings === 'function') _resetContainerSettings();
-        // Keep remembered sessions intact — "Back to menu" should not kill stored passwords
         // Reset desktop folder tracking
         if (typeof Desktop !== 'undefined') {
             Desktop._desktopFolder = 'root';
@@ -551,6 +559,7 @@ const App = {
         this.showView('home');
         await Home.render();
         await updateStorageInfo();
+        toast(cname ? `“${cname}” locked` : 'Container locked', 'info');
     }
 };
 

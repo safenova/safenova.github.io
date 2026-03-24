@@ -176,11 +176,47 @@ const Home = {
             const grid2 = document.getElementById('container-grid'),
                 sourceCard = grid2.querySelector(`.container-card[data-id="${CSS.escape(sourceId)}"]`);
             if (!sourceCard) return;
+
+            // Remove drag-source styling before FLIP snapshot so layout is clean
+            sourceCard.classList.remove('drag-reorder-source');
+
             const all = [...grid2.querySelectorAll('.container-card')],
                 fromIdx = all.indexOf(sourceCard),
                 toIdx = all.indexOf(card);
+            if (fromIdx === toIdx) return;
+
+            // FLIP — record positions before DOM change
+            const beforeRects = new Map(all.map(el => [el, el.getBoundingClientRect()]));
+
+            // Perform DOM reorder
             if (fromIdx < toIdx) card.after(sourceCard);
             else card.before(sourceCard);
+
+            // Force reflow so new positions are calculated
+            grid2.getBoundingClientRect();
+
+            // Apply inverse transforms (no transition yet — jump to old visual position)
+            const movedCards = [];
+            all.forEach(el => {
+                const bef = beforeRects.get(el), aft = el.getBoundingClientRect();
+                const dx = bef.left - aft.left, dy = bef.top - aft.top;
+                if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+                    el.style.transition = 'none';
+                    el.style.transform = `translate(${dx}px,${dy}px)`;
+                    movedCards.push(el);
+                }
+            });
+
+            // Second reflow to commit the inverse transforms before animating
+            grid2.getBoundingClientRect();
+
+            // Animate each card to its final (natural) position
+            movedCards.forEach(el => {
+                el.style.transition = 'transform 280ms cubic-bezier(0.25,0.46,0.45,0.94)';
+                el.style.transform = '';
+                el.addEventListener('transitionend', () => { el.style.transition = ''; }, { once: true });
+            });
+
             const newOrder = [...grid2.querySelectorAll('.container-card')].map(el => el.dataset.id).filter(Boolean);
             _saveCardOrder(newOrder);
         });

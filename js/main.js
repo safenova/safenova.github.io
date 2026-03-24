@@ -279,6 +279,15 @@ function initEvents() {
     document.addEventListener('touchstart', e => { if (!e.target.closest('.ctx-menu')) hideCtxMenu(); }, { passive: true });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtxMenu(); });
 
+    /* ---- End key: lock container (only on desktop/folder view, not in text fields) ---- */
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'End') return;
+        const tag = document.activeElement?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+        if (!App.key || !App.container) return;
+        App.lockContainer();
+    });
+
     /* ---- Block native browser context menu globally ---- */
     document.addEventListener('contextmenu', e => { e.preventDefault(); });
 
