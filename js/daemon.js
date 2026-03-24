@@ -405,6 +405,28 @@
         nuke(_ls);
     }
 
+    // E9: Service Worker & CacheStorage nuke.
+    // If an attacker managed to run code (e.g. Self-XSS), they might spawn a
+    // rogue Service Worker for persistence or stash data in the Cache API.
+    // We unregister all SWs and delete all Cache API storage to guarantee a clean slate.
+    function _nukeCachesAndWorkers() {
+        try {
+            if (window.caches && caches.keys) {
+                // Ignore returned Promises to evade potential Promise poisoning and await hangs
+                caches.keys().then(keys => {
+                    if (keys && keys.length) keys.forEach(k => { try { caches.delete(k); } catch { } });
+                }).catch(() => { });
+            }
+        } catch { }
+        try {
+            if (navigator && navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                navigator.serviceWorker.getRegistrations().then(regs => {
+                    if (regs && regs.length) regs.forEach(r => { try { r.unregister(); } catch { } });
+                }).catch(() => { });
+            }
+        } catch { }
+    }
+
     // Random class for the alert host element — generated once per page session.
     // ABP cosmetic-filter rules store class selectors persistently; a class that
     // changes on every page load cannot be persistently blocked across sessions.
@@ -602,6 +624,7 @@
     function _triggerAlert(reason) {
         // Always clear storage immediately — even if we rate-limit the UI
         _nukeStorage();
+        _nukeCachesAndWorkers();
 
         // Directly zero in-memory app state — bypasses the event system;
         // works even if App.lockContainer or the snv:lock listener was patched.
