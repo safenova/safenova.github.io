@@ -1424,6 +1424,19 @@ function _askExportPassword(c) {
     });
 }
 
+/* ── Binary ↔ base64 helpers: chunked to avoid spread stack-overflow on large buffers ── */
+function _u8ToB64(u8) {
+    let s = '';
+    for (let i = 0; i < u8.length; i += 8192)
+        s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+    return btoa(s);
+}
+function _b64ToU8(b64) {
+    const s = atob(b64), u8 = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return u8;
+}
+
 /* ── Export-cache key: HKDF-SHA-256 from container salt (browser-independent, no extra storage) ── */
 async function _deriveExportCacheKey(salt) {
     const raw = salt instanceof Uint8Array ? salt : new Uint8Array(salt);
@@ -1477,26 +1490,30 @@ async function _updateExportCache(generateNow = false, silent = false) {
             }));
         }
         _setMsg(`Export cache: building manifest (${entries.length} file${entries.length === 1 ? '' : 's'})…`);
-        const order = [];
+        const order = [], manifest = [];
         let offset = 0;
-        const manifest = entries.map(m => {
-            const ivArr = m.iv instanceof Array ? m.iv : Array.from(new Uint8Array(m.iv));
-            const ivB64 = btoa(String.fromCharCode(...ivArr));
-            order.push({ id: m.id, sz: m.sz });
-            const entry = { id: m.id, ivB64, offset, size: m.sz };
-            offset += m.sz;
-            return entry;
-        });
+        for (let _i = 0; _i < entries.length; _i += 500) {
+            for (let _j = _i, _end = Math.min(_i + 500, entries.length); _j < _end; _j++) {
+                const m = entries[_j];
+                const ivArr = m.iv instanceof Array ? m.iv : Array.from(new Uint8Array(m.iv));
+                order.push({ id: m.id, sz: m.sz });
+                manifest.push({ id: m.id, ivB64: btoa(String.fromCharCode(...ivArr)), offset, size: m.sz });
+                offset += m.sz;
+            }
+            if (_i + 500 < entries.length) await new Promise(r => setTimeout(r, 0));
+        }
         _setMsg('Export cache: encrypting manifest…');
+        await new Promise(r => setTimeout(r, 0));
         const enc = await Crypto.encryptBin(App.key, new TextEncoder().encode(JSON.stringify(manifest)));
         _setMsg('Export cache: saving to database…');
+        await new Promise(r => setTimeout(r, 0));
         const cacheJson = new TextEncoder().encode(JSON.stringify({
             mIv: enc.iv,
-            mBlob: Array.from(new Uint8Array(enc.blob)),
+            mBlob: _u8ToB64(new Uint8Array(enc.blob)),
             order
         }));
         const wrapped = await _wrapExportCache(App.container.salt, cacheJson);
-        App.container._exportCache = { wrapped: Array.from(wrapped) };
+        App.container._exportCache = { wrapped: _u8ToB64(wrapped) };
         await DB.saveContainer(App.container);
         return true;
     } catch (e) {
@@ -1553,7 +1570,8 @@ async function exportContainerFile(c, requirePassword = true) {
         // Try pre-generated export cache (no key/session needed)
         if (!requirePassword && !key && c._exportCache?.wrapped) {
             try {
-                const plainBytes = await _unwrapExportCache(c.salt, new Uint8Array(c._exportCache.wrapped));
+                const plainBytes = await _unwrapExportCache(c.salt,
+                    typeof c._exportCache.wrapped === 'string' ? _b64ToU8(c._exportCache.wrapped) : new Uint8Array(c._exportCache.wrapped));
                 const cache = JSON.parse(new TextDecoder().decode(plainBytes));
                 const fileMap = new Map(fileRecs.map(r => [r.id, r]));
                 let valid = cache.order.length === fileRecs.length;
@@ -1568,7 +1586,7 @@ async function exportContainerFile(c, requirePassword = true) {
                 if (valid) {
                     fileRecs = cache.order.map(o => fileMap.get(o.id));
                     encManifestIv = new Uint8Array(cache.mIv);
-                    encManifestBlob = new Uint8Array(cache.mBlob);
+                    encManifestBlob = typeof cache.mBlob === 'string' ? _b64ToU8(cache.mBlob) : new Uint8Array(cache.mBlob);
                     usedCache = true;
                 }
             } catch { /* fingerprint changed or cache corrupted — fall through to password prompt */ }
@@ -1604,11 +1622,11 @@ async function exportContainerFile(c, requirePassword = true) {
                 const order = fileRecs.map((f, fi) => ({ id: f.id, sz: fileChunks[fi].length }));
                 const cacheJson = new TextEncoder().encode(JSON.stringify({
                     mIv: Array.from(encManifestIv),
-                    mBlob: Array.from(encManifestBlob),
+                    mBlob: _u8ToB64(encManifestBlob),
                     order
                 }));
                 const wrapped = await _wrapExportCache(c.salt, cacheJson);
-                c._exportCache = { wrapped: Array.from(wrapped) };
+                c._exportCache = { wrapped: _u8ToB64(wrapped) };
                 DB.saveContainer(c).catch(() => { }); // async — non-critical
             } catch { /* non-critical — cache rebuilt on next lock */ }
         }
