@@ -386,3 +386,40 @@ function _onTabUnload(e) {
 }
 window.addEventListener('beforeunload', _onTabUnload);
 window.addEventListener('pagehide', _onTabUnload);
+
+/* ============================================================
+   SETTINGS HINT TOOLTIPS
+   ============================================================ */
+(function () {
+    let _stip = null;
+
+    document.addEventListener('mouseover', e => {
+        const hint = e.target.closest('.settings-hint');
+        if (!hint || !hint.dataset.tip) return;
+        if (_stip) return;
+        _stip = document.createElement('div');
+        _stip.className = 'settings-tip';
+        // Use \u2028 in data-tip as line separator — render as <br>
+        _stip.innerHTML = hint.dataset.tip.split('\u2028').map(s => escHtml(s)).join('<br>');
+        _stip.style.cssText = 'visibility:hidden';
+        document.body.appendChild(_stip);
+        const r = hint.getBoundingClientRect(),
+            tw = _stip.offsetWidth,
+            th = _stip.offsetHeight;
+        let left = r.right + 8,
+            top = r.top + (r.height / 2) - (th / 2);
+        // Flip left if not enough room on the right
+        if (left + tw > window.innerWidth - 8) left = r.left - tw - 8;
+        // Clamp vertically
+        top = Math.min(Math.max(top, 6), window.innerHeight - th - 6);
+        _stip.style.cssText = `left:${left}px;top:${top}px`;
+    });
+
+    document.addEventListener('mouseout', e => {
+        const hint = e.target.closest('.settings-hint');
+        if (!hint) return;
+        // Cursor moved to a child element of the same hint — don't destroy
+        if (hint.contains(e.relatedTarget)) return;
+        if (_stip) { _stip.remove(); _stip = null; }
+    });
+})();

@@ -2383,6 +2383,8 @@ input[type="password"]::-ms-clear {
     gap: 12px;
 }
 .settings-label {
+    display: inline-flex;
+    align-items: center;
     font-size: 13px;
     color: var(--text);
     white-space: nowrap;
@@ -3495,6 +3497,49 @@ input[type="password"]::-ms-clear {
     letter-spacing: 0.5px;
     border-bottom: 1px solid var(--border2);
     padding-bottom: 4px;
+}
+
+/* ---- Settings inline hint icon + tooltip ---- */
+.settings-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    margin-left: 5px;
+    position: relative;
+    top: 1px;
+    color: var(--text-dim);
+    opacity: 0.55;
+    cursor: default;
+    background: none;
+    border: none;
+    padding: 0;
+    transition: opacity var(--transition), color var(--transition);
+}
+.settings-hint:hover {
+    opacity: 1;
+    color: var(--accent);
+}
+.settings-hint svg {
+    display: block;
+}
+.settings-tip {
+    position: fixed;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.6;
+    padding: 7px 10px;
+    border-radius: var(--r);
+    box-shadow: var(--shadow-sm);
+    z-index: 9800;
+    pointer-events: none;
+    white-space: normal;
+    max-width: 260px;
+    animation: tooltipIn 0.1s ease;
 }
 
 /* CUSTOM DROPDOWN UI */

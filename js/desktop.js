@@ -1180,6 +1180,7 @@ function _openScannerModal() {
         if (totalRemoved > 0) {
             await saveVFS();
             Desktop.render();
+            if (typeof _scheduleExportCacheRefresh === 'function') _scheduleExportCacheRefresh();
             await _delay(600);
             if (!_aborted) await _runScanAnimated(false);
         } else {
@@ -1244,6 +1245,7 @@ function _openScannerModal() {
         if (repair && totalFixed > 0) {
             await saveVFS();
             Desktop.render();
+            if (typeof _scheduleExportCacheRefresh === 'function') _scheduleExportCacheRefresh();
             // Auto-re-scan to verify the repair result
             summary.className = 'scanner-summary repaired';
             summary.innerHTML = `<svg width="20" height="20" viewBox="0 0 16 16" fill="none"><path d="M4 8l3 3 5-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="round"/></svg>

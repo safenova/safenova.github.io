@@ -78,6 +78,7 @@ async function uploadFiles(files) {
     if (ok > 0) {
         toast(`${ok} file${ok > 1 ? 's' : ''} imported`, 'success');
         logActivity('upload', ok === 1 ? files[0].name : `${ok} files`, ok, ok === 1 && _okIds[0] ? VFS.fullPath(_okIds[0]) : null);
+        _scheduleExportCacheRefresh();
     }
 }
 
@@ -201,6 +202,7 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
             const _sn = ok === 1 ? VFS.children(targetFolderId).find(n => n.name === sanitizeFilename(entries[0]?.name || '')) : null;
             logActivity('upload', ok === 1 ? (entries[0]?.name ?? '1 item') : `${ok} items`, ok, _sn ? VFS.fullPath(_sn.id) : null);
         }
+        _scheduleExportCacheRefresh();
     }
     if (_uploadLimitHit) toast(`Container is full (${fmtSize(CONTAINER_LIMIT)}) — some files were not imported`, 'error');
 }
@@ -319,6 +321,7 @@ async function deleteSelected() {
         hideLoading();
         toast('Deleted', 'info');
         logActivity('delete', ids.length === 1 ? names[0] : `${ids.length} items`, ids.length, _delSinglePath);
+        _scheduleExportCacheRefresh();
     };
 }
 
@@ -575,6 +578,8 @@ async function pasteItems() {
     Desktop._patchIcons();
     if (typeof WinManager !== 'undefined') WinManager.renderAll();
     logActivity('paste', ids.length === 1 ? (_pastedSn ?? VFS.node(ids[0])?.name ?? '1 item') : `${ids.length} items`, ids.length, _srcFolderPath, VFS.fullPath(App.folder));
+    // Copy paste creates new file blobs — refresh the export cache
+    if (op === 'copy') _scheduleExportCacheRefresh();
 }
 
 async function deepCopy(nodeId, newParent, newName, _depth = 0) {
@@ -882,6 +887,7 @@ async function saveEditor() {
         Desktop._patchIcons();
         toast('File saved', 'success');
         logActivity('edit', _editorNode.name, 1, VFS.fullPath(_editorNode.id));
+        _scheduleExportCacheRefresh();
         saved = true;
     } catch (e) { toast('Save failed: ' + e.message, 'error'); console.error(e); }
     hideLoading();
@@ -1442,10 +1448,10 @@ async function _unwrapExportCache(salt, data) {
 }
 
 /* ── Pre-generate encrypted manifest for passwordless export ──
-   generateNow=true bypasses the saved-settings check — used when the toggle
-   was just switched but the new value hasn't been written to IDB yet.
+   generateNow=true  — bypasses the saved-settings check (toggle just switched).
+   silent=true       — no loading overlay; fire-and-forget from file operations.
    Returns true on success, false on failure. */
-async function _updateExportCache(generateNow = false) {
+async function _updateExportCache(generateNow = false, silent = false) {
     if (!App.container || !App.key) return false;
     const shouldGenerate = generateNow || (App.container.settings || {}).requireExportPassword === false;
     if (!shouldGenerate) {
@@ -1456,8 +1462,8 @@ async function _updateExportCache(generateNow = false) {
         }
         return true;
     }
-    const _setMsg = msg => { document.getElementById('loading-msg').textContent = msg; };
-    showLoading('Generating export cache database…');
+    const _setMsg = msg => { if (!silent) document.getElementById('loading-msg').textContent = msg; };
+    if (!silent) showLoading('Generating export cache database…');
     try {
         _setMsg('Export cache: reading file list…');
         const meta = await DB.getFileMetaByCid(App.container.id);
@@ -1502,8 +1508,15 @@ async function _updateExportCache(generateNow = false) {
         }
         return false;
     } finally {
-        hideLoading();
+        if (!silent) hideLoading();
     }
+}
+
+/* ── Schedule a silent cache refresh after a file operation, only when the
+   passwordless-export setting is active. Fire-and-forget; never throws. ── */
+function _scheduleExportCacheRefresh() {
+    if ((App.container?.settings || {}).requireExportPassword !== false) return;
+    _updateExportCache(false, true).catch(() => {});
 }
 
 /* ── Remove orphaned export cache: cache stored in IDB but setting was never
