@@ -3621,3 +3621,105 @@ input[type="password"]::-ms-clear {
     background: rgba(0, 120, 212, 0.2);
     color: var(--accent);
 }
+
+/* ============================================================
+   DAEMON — Alert overlay + Security barrier veil
+   ============================================================ */
+/* Overlay backdrop — covers full viewport, centres the card */
+.snv-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font);
+}
+/* Alert card */
+.snv-card {
+    max-width: 520px;
+    width: calc(100% - 96px);
+    background: var(--bg);
+    border: 1px solid var(--red);
+    border-radius: var(--r);
+    padding: 24px 28px;
+    color: var(--text);
+    text-align: left;
+    box-shadow: var(--shadow);
+}
+/* Header row (icon + title) */
+.snv-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.snv-icon {
+    color: var(--red);
+    flex-shrink: 0;
+}
+.snv-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--red);
+    letter-spacing: 0.01em;
+}
+/* Reason code block */
+.snv-reason {
+    font-size: 12px;
+    font-family: var(--mono);
+    background: var(--bg2);
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    margin-bottom: 14px;
+    word-break: break-all;
+    color: var(--red);
+}
+/* Description paragraphs */
+.snv-desc {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+    margin-bottom: 6px;
+}
+.snv-desc strong {
+    color: var(--text-bright);
+}
+.snv-hint {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    margin-bottom: 18px;
+}
+/* Reload button */
+.snv-btn {
+    background: #5a1a1a;
+    color: var(--red);
+    border: 1px solid #7a2222;
+    border-radius: var(--r);
+    padding: 6px 14px;
+    font-family: var(--font);
+    font-size: 13px;
+    cursor: pointer;
+}
+.snv-btn:hover {
+    background: #7a2222;
+}
+/* Barrier veil — diagonal animated stripes */
+.snv-veil {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483646;
+    background-image:
+        linear-gradient(
+            -45deg,
+            rgba(6, 0, 0, 0.92) 0%, rgba(6, 0, 0, 0.92) 25%,
+            rgba(155, 18, 18, 0.60) 25%, rgba(155, 18, 18, 0.60) 50%,
+            rgba(6, 0, 0, 0.92) 50%, rgba(6, 0, 0, 0.92) 75%,
+            rgba(155, 18, 18, 0.60) 75%, rgba(155, 18, 18, 0.60) 100%
+        );
+    background-size: 32px 32px;
+    display: block;
+}

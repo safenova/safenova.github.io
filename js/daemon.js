@@ -1,7 +1,7 @@
 'use strict';
 
 /* ============================================================
-   SafeNova Proactive — Runtime Protection Module
+   SafeNova Proactive — Anti-Tamper Runtime Integrity Guard
    Version 4
 
    Loads BEFORE all other application scripts. Every other
@@ -418,6 +418,21 @@
     let _alertHealer = null; // Bug 1b: module-level ref so old healer can be disconnected
 
     function _showAlert(reason) {
+        // CSS for alert internals — injected into ShadowRoot (external CSS cannot
+        // penetrate closed shadows). Uses the same values as app.css .snv-* rules.
+        // Every element receives _ALERT_HOST_CLS as first class for ABP-resistance.
+        const _css = `
+.snv-card{max-width:520px;width:calc(100% - 96px);background:#1e1e1e;border:1px solid #f44747;border-radius:2px;padding:24px 28px;color:#d4d4d4;text-align:left;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.snv-header{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.snv-icon{color:#f44747;flex-shrink:0}
+.snv-title{font-size:14px;font-weight:600;color:#f44747;letter-spacing:.01em}
+.snv-reason{font-size:12px;font-family:'Cascadia Code',Consolas,'Courier New',monospace;background:#252526;padding:8px 12px;border:1px solid #3c3c3c;border-radius:2px;margin-bottom:14px;word-break:break-all;color:#f44747}
+.snv-desc{font-size:13px;line-height:1.6;color:#d4d4d4;margin-bottom:6px}
+.snv-desc strong{color:#fff}
+.snv-hint{font-size:13px;line-height:1.6;color:#858585;margin-bottom:18px}
+.snv-btn{background:#5a1a1a;color:#f44747;border:1px solid #7a2222;border-radius:2px;padding:6px 14px;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;cursor:pointer}
+.snv-btn:hover{background:#7a2222}`;
+
         const render = () => {
             // Remove previous alert by stored reference, not by predictable selector
             try { _alertOverlay?.remove(); _alertOverlay = null; } catch { }
@@ -430,14 +445,17 @@
                 _alertHealer = null;
             }
 
+            const _rc = _ALERT_HOST_CLS; // shorthand for random class
+
             // Use the captured native createElement so hooks cannot interfere
             const overlay = _N.createElement.call(document, 'div');
             // F1: Random session-specific class — cannot be persistently blocked by
             //     cosmetic filters (class name is unguessable and changes every load).
-            //     Critical properties use !important; inline !important beats any
-            //     author-stylesheet !important per the CSS cascade specification.
-            overlay.className = _ALERT_HOST_CLS;
-            const _styleKV = [
+            //     CSS class "snv-overlay" provides the visual styles; _rc defeats ABP.
+            overlay.className = _rc + ' snv-overlay';
+            // Critical properties use !important; inline !important beats any
+            // author-stylesheet !important per the CSS cascade specification.
+            for (const [p, v] of [
                 ['position', 'fixed'],
                 ['inset', '0'],
                 ['z-index', '2147483647'],
@@ -446,10 +464,7 @@
                 ['align-items', 'center'],
                 ['justify-content', 'center'],
                 ['font-family', '"Segoe UI",system-ui,-apple-system,sans-serif'],
-            ];
-            for (const [p, v] of _styleKV) {
-                try { overlay.style.setProperty(p, v, 'important'); } catch { }
-            }
+            ]) { try { overlay.style.setProperty(p, v, 'important'); } catch { } }
             _alertOverlay = overlay;
 
             const safeReason = String(reason)
@@ -467,24 +482,25 @@
                 contentRoot = shadow;
             } catch { /* ShadowRoot unavailable — fall back to plain overlay */ }
 
-            contentRoot.innerHTML = `
-<div style="max-width:520px;width:calc(100% - 96px);background:#1e1e1e;border:1px solid #f44747;border-radius:2px;padding:24px 28px;color:#d4d4d4;text-align:left;box-shadow:0 8px 32px rgba(0,0,0,.6)">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="color:#f44747;flex-shrink:0" xmlns="http://www.w3.org/2000/svg">
+            // Inject styles into shadow (external CSS cannot reach closed shadow)
+            contentRoot.innerHTML = `<style>${_css}</style>
+<div class="${_rc} snv-card">
+  <div class="${_rc} snv-header">
+    <svg class="${_rc} snv-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
       <path d="M12 8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
       <circle cx="12" cy="16" r="1" fill="currentColor"/>
     </svg>
-    <span style="font-size:14px;font-weight:600;color:#f44747;letter-spacing:.01em">SafeNova Proactive</span>
+    <span class="${_rc} snv-title">SafeNova Proactive</span>
   </div>
-  <div style="font-size:12px;font-family:'Cascadia Code',Consolas,'Courier New',monospace;background:#252526;padding:8px 12px;border:1px solid #3c3c3c;border-radius:2px;margin-bottom:14px;word-break:break-all;color:#f44747">${safeReason}</div>
-  <div style="font-size:13px;line-height:1.6;color:#d4d4d4;margin-bottom:6px">
-    A suspicious operation was <strong style="color:#fff">blocked</strong> and all encrypted session keys have been <strong style="color:#fff">cleared</strong>.
+  <div class="${_rc} snv-reason">${safeReason}</div>
+  <div class="${_rc} snv-desc">
+    A suspicious operation was <strong>blocked</strong> and all encrypted session keys have been <strong>cleared</strong>.
   </div>
-  <div style="font-size:13px;line-height:1.6;color:#858585;margin-bottom:18px">
+  <div class="${_rc} snv-hint">
     This may indicate a malicious browser extension attempting to intercept or exfiltrate data. Audit your installed extensions and reload.
   </div>
-  <button id="snv-pa-ok" style="background:#5a1a1a;color:#f44747;border:1px solid #7a2222;border-radius:2px;padding:6px 14px;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;cursor:pointer">
+  <button class="${_rc} snv-btn" id="snv-pa-ok">
     I understand — Reload
   </button>
 </div>`;
@@ -576,6 +592,7 @@
             if (Date.now() > _trapEnd) {
                 _N._clearInterval.call(window, _tidRef.id);
                 _trapIds.delete(_tidRef.id);
+                _debugTrapActive = false;
             }
         };
         _tidRef.id = _N._setInterval.call(window, _fire, 50);
@@ -735,6 +752,7 @@
                 try { if (a.container !== undefined) a.container = null; } catch { }
                 try { if (a.clipboard !== undefined) a.clipboard = null; } catch { }
                 try { if (a.thumbCache !== undefined) a.thumbCache = {}; } catch { }
+                try { if (a.selection instanceof Set) a.selection.clear(); } catch { }
             }
         } catch { }
 
@@ -829,7 +847,7 @@
         // F3: Security barrier veil — animated diagonal stripes (Minecraft barrier style).
         // Covers all application content below the alert overlay.
         // z-index 2147483646: below alert (2147483647), above everything else.
-        // No id/class — cosmetic-filter resistant.
+        // CSS class "snv-veil" provides visual styles; _ALERT_HOST_CLS defeats ABP.
         //
         // Technique: linear-gradient (NOT repeating) over a square tile with stops at
         // 25 % / 50 % / 75 % / 100 %. This is the only approach that produces clean
@@ -842,18 +860,14 @@
         // Stripe colours:
         //   dark band  → rgba(6, 0, 0, 0.92) — near-black with a faint red tint
         //   light band → rgba(155, 18, 18, 0.60) — muted dark red, semi-transparent
+        //
+        // NOTE: No background-color — stripes are semi-transparent so the app
+        // content bleeds through, making the barrier visible but not fully opaque.
         try {
             const _T = 32; // tile side, px — must be even for clean 50 % boundary
             const _Tpx = _T + 'px';
             const _dark = 'rgba(6,0,0,.92)';
             const _red = 'rgba(155,18,18,.60)';
-            // linear-gradient over one square tile with 4 equal-width bands:
-            //   0 %–25 %   dark
-            //   25 %–50 %  red
-            //   50 %–75 %  dark
-            //   75 %–100 % red
-            // At -45 deg this fills the tile corner-to-corner, producing two dark and
-            // two red stripes per tile — visually identical to the reference pattern.
             const _barrier = [
                 'linear-gradient(-45deg,',
                 _dark + ' 0%,' + _dark + ' 25%,',
@@ -862,11 +876,11 @@
                 _red + ' 75%,' + _red + ' 100%)',
             ].join('');
             const veil = _N.createElement.call(document, 'div');
+            veil.className = _ALERT_HOST_CLS + ' snv-veil';
             for (const [p, v] of [
                 ['position', 'fixed'],
                 ['inset', '0'],
                 ['z-index', '2147483646'],
-                ['background-color', _dark],
                 ['background-image', _barrier],
                 ['background-size', _Tpx + ' ' + _Tpx],
                 ['display', 'block'],
@@ -955,6 +969,7 @@
             if (!_liveC ||
                 _liveC.encrypt !== _appCryptoRefs.encrypt ||
                 _liveC.decrypt !== _appCryptoRefs.decrypt ||
+                _liveC.encryptBin !== _appCryptoRefs.encryptBin ||
                 _liveC.decryptBin !== _appCryptoRefs.decryptBin ||
                 _liveC.deriveKey !== _appCryptoRefs.deriveKey ||
                 _liveC.deriveKeyAndRaw !== _appCryptoRefs.deriveKeyAndRaw
@@ -995,7 +1010,7 @@
     // will return false because the attacker's guard won't carry our _canary.
     try {
         Object.defineProperty(window, '__snvGuard', {
-            value: Object.freeze({ active: _captureClean, version: 4, _c: _canary }),
+            value: Object.freeze({ active: _captureClean, version: 5, _c: _canary }),
             writable: false,
             configurable: false,
             enumerable: false,
@@ -1049,10 +1064,22 @@
     _watchdogIds.add(_ivId);
 
     // ── Mechanism 2: recursive setTimeout (~937 ms, prime offset) ─
+    //    For recursive setTimeout the timer IDs change every iteration.
+    //    We cap the Set to the last 8 IDs to avoid unbounded memory growth
+    //    (at 937 ms cadence this is ~7.5 seconds of IDs — more than enough
+    //    to foil an attacker who reads the current Set snapshot in the
+    //    brief window between when a new ID is generated and added).
     (function _stLoop() {
         _tick();
         const id = _N._setTimeout.call(window, _stLoop, 937);
         _watchdogIds.add(id);
+        if (_watchdogIds.size > 16) {
+            const iter = _watchdogIds.values();
+            // keep the first entry (setInterval ID) + trim oldest setTimeout IDs
+            iter.next(); // skip _ivId
+            const oldest = iter.next().value;
+            _watchdogIds.delete(oldest);
+        }
     })();
 
     // ── Mechanism 3: requestAnimationFrame chain ───────────────
