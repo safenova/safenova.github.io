@@ -262,7 +262,12 @@ function downloadBuf(buf, name, mime) {
     const blob = new Blob(Array.isArray(buf) ? buf : [buf], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = name; a.click();
+    a.href = url; a.download = name;
+    // Append to DOM before click — some Chrome builds require a connected
+    // element for the download attribute to trigger blob saves correctly.
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 

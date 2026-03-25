@@ -334,6 +334,19 @@ const DB = (() => {
                 await this.deleteFiles(ids);
             }
             await this.deleteVFS(cid);
+            // Null out lazyWorkspace/heavy blobs before deleting the container record.
+            // Chrome stores large Blobs in external files; IDB delete queues them for
+            // lazy GC but navigator.storage.estimate() still counts them as used.
+            // Overwriting with null forces immediate blob file release.
+            try {
+                const c = await wrap(ro('containers').get(cid));
+                if (c && (c.lazyWorkspace || c._alogZ || c._exportCache)) {
+                    c.lazyWorkspace = null;
+                    c._alogZ = null;
+                    c._exportCache = null;
+                    await wrap(rw('containers').put(c));
+                }
+            } catch { /* read failed — proceed to delete */ }
             await this.deleteContainer(cid);
         },
 

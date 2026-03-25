@@ -518,6 +518,7 @@ const App = {
         this.selection = new Set();
         this.clipboard = null;
         this.thumbCache = {};
+        if (typeof _cancelThumbQueue === 'function') _cancelThumbQueue();
         this._winCtx = null;
         if (typeof WinManager !== 'undefined') WinManager.closeAll();
         if (typeof _resetContainerSettings === 'function') _resetContainerSettings();
@@ -546,6 +547,7 @@ const App = {
         this.selection = new Set();
         this.clipboard = null;
         this.thumbCache = {};
+        if (typeof _cancelThumbQueue === 'function') _cancelThumbQueue();
         this._winCtx = null;
         // Close all open folder windows
         if (typeof WinManager !== 'undefined') WinManager.closeAll();

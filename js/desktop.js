@@ -556,6 +556,7 @@ function _resetAutoLockTimer() {
     }
 }
 
+let _ddCloseListener = null;
 function openSettings() {
     const s = _getSettings();
     // Populate UI
@@ -608,16 +609,14 @@ function openSettings() {
         };
     });
 
-    // Close dropdowns on outside click
-    document.addEventListener('click', () => {
-        document.querySelectorAll('.custom-dd').forEach(d => d.classList.remove('open'));
-    }, { once: true }); // This might attach multiple times, let's just make it persistent on body in main if needed, but it's fine here for now since modal blocks. Actually better:
-
-    document.addEventListener('click', (e) => {
+    // Close dropdowns on outside click — replace previous listener to avoid accumulation
+    if (_ddCloseListener) document.removeEventListener('click', _ddCloseListener);
+    _ddCloseListener = (e) => {
         if (!e.target.closest('.custom-dd')) {
             document.querySelectorAll('.custom-dd').forEach(d => d.classList.remove('open'));
         }
-    });
+    };
+    document.addEventListener('click', _ddCloseListener);
 
     // Tab state
     document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'personalization'));
@@ -1481,6 +1480,11 @@ function _snapFreeCell(rawX, rawY, occupied, extra) {
 const _thumbQueue = [];
 let _thumbActive = 0;
 const THUMB_MAX_CONCURRENT = 8;
+
+function _cancelThumbQueue() {
+    _thumbQueue.length = 0;
+    _thumbActive = 0;
+}
 
 function _enqueueThumb(node) {
     _thumbQueue.push(node);

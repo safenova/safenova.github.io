@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; frame-src blob:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'none'; object-src 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; frame-src blob: about:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'none'; object-src 'none'">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="description" content="SafeNova — browser-based encrypted virtual file system. AES-256-GCM + Argon2id, zero-knowledge, fully offline.">
     <meta name="theme-color" content="#1e1e1e">
@@ -15,7 +15,7 @@
     <link rel="icon" href="favicon.png" type="image/png">
     <link rel="apple-touch-icon" href="favicon.png">
     <script src="js/docmode.js"></script>
-    <script src="js/daemon.js"></script>
+    <script src="js/proactive/daemon.js"></script>
     <link rel="stylesheet" href="css/app.css">
 </head>
 
@@ -1158,7 +1158,7 @@
 
     <!-- ==================== SCRIPTS (dependency order) ==================== -->
     <!-- daemon.js already loaded in <head> — runs before any other module -->
-    <script src="js/argon2.umd.min.js"></script>
+    <script src="js/libs/argon2.umd.min.js"></script>
     <script src="js/initlog.js"></script>
     <script src="js/constants.js"></script>
     <script src="js/db.js"></script>
