@@ -378,10 +378,15 @@ window.addEventListener('snv:lock', () => {
 (() => {
     let _lastAlive = Date.now(), _lastHbN = 0;
     window.addEventListener('snv:alive', e => {
-        // Only accept events with a strictly increasing monotonic counter (E5).
-        // An attacker faking snv:alive events cannot know the current count from the daemon closure.
+        // Only accept events with a strictly increasing monotonic counter (E5)
+        // capped to a maximum jump of 15 per event.
+        // Without the upper bound an attacker (Self-XSS / extension) can dispatch
+        // snv:alive with n = Number.MAX_SAFE_INTEGER, permanently advancing _lastHbN
+        // so all real daemon ticks (n=1,2,3…) are rejected → forced lockout in 3 s.
+        // At three mechanisms × ~1 tick/s = ~3 ticks/s, a delta of 15 covers ≥ 5 s
+        // of genuine ticks, so no false positives from timer jitter.
         const n = e?.detail?.n;
-        if (typeof n === 'number' && n > _lastHbN) {
+        if (typeof n === 'number' && n > _lastHbN && n <= _lastHbN + 15) {
             _lastHbN = n;
             _lastAlive = Date.now();
         }
