@@ -112,6 +112,12 @@
 
 (() => {
 
+    // DEBUG: set to true to disable all protection mechanisms
+    // (hooks, alerts, nukeStorage, native checks, debugger trap)
+    // while keeping timers and heartbeat alive. Used to isolate
+    // whether daemon.js is the cause of session invalidation.
+    const _DISABLE_PROACTIVE_ANTITAMPER = false;
+
     /* ──────────────────────────────────────────────────────────
        0.  Earliest possible capture — before anything else runs
        ────────────────────────────────────────────────────────── */
@@ -239,8 +245,8 @@
            section 1b _captureClean checks will refuse boot.
        ────────────────────────────────────────────────────────── */
     const _docCreateEl = Document.prototype.createElement;
-    const _nodeAppend  = Node.prototype.appendChild;
-    const _nodeRemove  = Node.prototype.removeChild;
+    const _nodeAppend = Node.prototype.appendChild;
+    const _nodeRemove = Node.prototype.removeChild;
     // Verify the DOM creation primitives are native before trusting them.
     const _canUseIframe = _isNative(_docCreateEl) && _isNative(_nodeAppend) && _isNative(_nodeRemove);
 
@@ -270,40 +276,40 @@
                 // based restorations (innerHTML, href, storage.length, …) will then
                 // call the native version.
                 if (_iwin.Object) {
-                    _rst(Object, 'defineProperty',            _iwin.Object.defineProperty);
-                    _rst(Object, 'getOwnPropertyDescriptor',  _iwin.Object.getOwnPropertyDescriptor);
+                    _rst(Object, 'defineProperty', _iwin.Object.defineProperty);
+                    _rst(Object, 'getOwnPropertyDescriptor', _iwin.Object.getOwnPropertyDescriptor);
                     _rst(Object, 'getOwnPropertyDescriptors', _iwin.Object.getOwnPropertyDescriptors);
-                    _rst(Object, 'freeze',                    _iwin.Object.freeze);
-                    _rst(Object, 'keys',                      _iwin.Object.keys);
-                    _rst(Object, 'assign',                    _iwin.Object.assign);
+                    _rst(Object, 'freeze', _iwin.Object.freeze);
+                    _rst(Object, 'keys', _iwin.Object.keys);
+                    _rst(Object, 'assign', _iwin.Object.assign);
                 }
                 if (_iwin.Reflect) {
-                    _rst(Reflect, 'apply',          _iwin.Reflect.apply);
-                    _rst(Reflect, 'construct',      _iwin.Reflect.construct);
+                    _rst(Reflect, 'apply', _iwin.Reflect.apply);
+                    _rst(Reflect, 'construct', _iwin.Reflect.construct);
                     _rst(Reflect, 'defineProperty', _iwin.Reflect.defineProperty);
-                    _rst(Reflect, 'ownKeys',        _iwin.Reflect.ownKeys);
+                    _rst(Reflect, 'ownKeys', _iwin.Reflect.ownKeys);
                 }
                 if (_iwin.RegExp) _rst(RegExp.prototype, 'test', _iwin.RegExp.prototype.test);
                 if (_iwin.Array) {
-                    _rst(Array.prototype, 'push',  _iwin.Array.prototype.push);
+                    _rst(Array.prototype, 'push', _iwin.Array.prototype.push);
                     _rst(Array.prototype, 'slice', _iwin.Array.prototype.slice);
-                    _rst(Array, 'from',            _iwin.Array.from);
-                    _rst(Array, 'isArray',         _iwin.Array.isArray);
+                    _rst(Array, 'from', _iwin.Array.from);
+                    _rst(Array, 'isArray', _iwin.Array.isArray);
                 }
                 if (_iwin.String) {
-                    _rst(String.prototype, 'slice',       _iwin.String.prototype.slice);
-                    _rst(String.prototype, 'indexOf',     _iwin.String.prototype.indexOf);
+                    _rst(String.prototype, 'slice', _iwin.String.prototype.slice);
+                    _rst(String.prototype, 'indexOf', _iwin.String.prototype.indexOf);
                     _rst(String.prototype, 'toLowerCase', _iwin.String.prototype.toLowerCase);
                 }
 
                 // ── 2. Window-level globals ───────────────────────────
-                _rst(window, 'fetch',                 _iwin.fetch);
-                _rst(window, 'XMLHttpRequest',        _iwin.XMLHttpRequest);
-                _rst(window, 'WebSocket',             _iwin.WebSocket);
-                _rst(window, 'EventSource',           _iwin.EventSource);
-                _rst(window, 'Worker',                _iwin.Worker);
-                _rst(window, 'MutationObserver',      _iwin.MutationObserver);
-                _rst(window, 'CustomEvent',           _iwin.CustomEvent);
+                _rst(window, 'fetch', _iwin.fetch);
+                _rst(window, 'XMLHttpRequest', _iwin.XMLHttpRequest);
+                _rst(window, 'WebSocket', _iwin.WebSocket);
+                _rst(window, 'EventSource', _iwin.EventSource);
+                _rst(window, 'Worker', _iwin.Worker);
+                _rst(window, 'MutationObserver', _iwin.MutationObserver);
+                _rst(window, 'CustomEvent', _iwin.CustomEvent);
                 // URL and Blob constructors are intentionally NOT restored from
                 // the iframe.  After iframe DOM removal the browsing context is
                 // destroyed; constructors and static methods that depend on the
@@ -316,24 +322,24 @@
                 // at boot and the app refuses to start.
                 // _rst(window, 'URL',  _iwin.URL);
                 // _rst(window, 'Blob', _iwin.Blob);
-                _rst(window, 'Uint8Array',            _iwin.Uint8Array);
-                _rst(window, 'ArrayBuffer',           _iwin.ArrayBuffer);
-                _rst(window, 'DataView',              _iwin.DataView);
-                _rst(window, 'TextEncoder',           _iwin.TextEncoder);
-                _rst(window, 'TextDecoder',           _iwin.TextDecoder);
-                _rst(window, 'btoa',                  _iwin.btoa);
-                _rst(window, 'atob',                  _iwin.atob);
-                _rst(window, 'setTimeout',            _iwin.setTimeout);
-                _rst(window, 'clearTimeout',          _iwin.clearTimeout);
-                _rst(window, 'setInterval',           _iwin.setInterval);
-                _rst(window, 'clearInterval',         _iwin.clearInterval);
+                _rst(window, 'Uint8Array', _iwin.Uint8Array);
+                _rst(window, 'ArrayBuffer', _iwin.ArrayBuffer);
+                _rst(window, 'DataView', _iwin.DataView);
+                _rst(window, 'TextEncoder', _iwin.TextEncoder);
+                _rst(window, 'TextDecoder', _iwin.TextDecoder);
+                _rst(window, 'btoa', _iwin.btoa);
+                _rst(window, 'atob', _iwin.atob);
+                _rst(window, 'setTimeout', _iwin.setTimeout);
+                _rst(window, 'clearTimeout', _iwin.clearTimeout);
+                _rst(window, 'setInterval', _iwin.setInterval);
+                _rst(window, 'clearInterval', _iwin.clearInterval);
                 _rst(window, 'requestAnimationFrame', _iwin.requestAnimationFrame);
-                _rst(window, 'cancelAnimationFrame',  _iwin.cancelAnimationFrame);
+                _rst(window, 'cancelAnimationFrame', _iwin.cancelAnimationFrame);
                 // eval / Function — restored to native here; E15/E16 hooks block them later
-                _rst(window, 'eval',     _iwin.eval);
+                _rst(window, 'eval', _iwin.eval);
                 _rst(window, 'Function', _iwin.Function);
-                if (_iwin.SharedWorker)        _rst(window, 'SharedWorker',        _iwin.SharedWorker);
-                if (_iwin.CompressionStream)   _rst(window, 'CompressionStream',   _iwin.CompressionStream);
+                if (_iwin.SharedWorker) _rst(window, 'SharedWorker', _iwin.SharedWorker);
+                if (_iwin.CompressionStream) _rst(window, 'CompressionStream', _iwin.CompressionStream);
                 if (_iwin.DecompressionStream) _rst(window, 'DecompressionStream', _iwin.DecompressionStream);
 
                 // ── 3. Crypto ─────────────────────────────────────────
@@ -352,8 +358,8 @@
                     const _iSubtle = _iCrypto.subtle;
                     if (_iSubtle && typeof _iSubtle === 'object' && window.crypto.subtle) {
                         const _sM = ['encrypt', 'decrypt', 'importKey', 'exportKey',
-                                     'deriveKey', 'deriveBits', 'digest', 'sign',
-                                     'verify', 'generateKey', 'wrapKey', 'unwrapKey'];
+                            'deriveKey', 'deriveBits', 'digest', 'sign',
+                            'verify', 'generateKey', 'wrapKey', 'unwrapKey'];
                         for (let _si = 0; _si < _sM.length; _si++) {
                             const _sv = _iSubtle[_sM[_si]];
                             if (typeof _sv === 'function' && _isNative(_sv)) {
@@ -378,21 +384,21 @@
                 // ── 5. EventTarget prototype ──────────────────────────
                 if (_iwin.EventTarget) {
                     const _iETP = _iwin.EventTarget.prototype;
-                    _rst(EventTarget.prototype, 'addEventListener',    _iETP.addEventListener);
-                    _rst(EventTarget.prototype, 'dispatchEvent',       _iETP.dispatchEvent);
+                    _rst(EventTarget.prototype, 'addEventListener', _iETP.addEventListener);
+                    _rst(EventTarget.prototype, 'dispatchEvent', _iETP.dispatchEvent);
                     _rst(EventTarget.prototype, 'removeEventListener', _iETP.removeEventListener);
                 }
 
                 // ── 6. Element / Node / Document prototypes ───────────
                 if (_iwin.Element) {
                     const _iElP = _iwin.Element.prototype;
-                    _rst(Element.prototype, 'setAttribute',       _iElP.setAttribute);
-                    _rst(Element.prototype, 'getAttribute',       _iElP.getAttribute);
-                    _rst(Element.prototype, 'removeAttribute',    _iElP.removeAttribute);
+                    _rst(Element.prototype, 'setAttribute', _iElP.setAttribute);
+                    _rst(Element.prototype, 'getAttribute', _iElP.getAttribute);
+                    _rst(Element.prototype, 'removeAttribute', _iElP.removeAttribute);
                     _rst(Element.prototype, 'insertAdjacentHTML', _iElP.insertAdjacentHTML);
-                    _rst(Element.prototype, 'querySelector',      _iElP.querySelector);
-                    _rst(Element.prototype, 'querySelectorAll',   _iElP.querySelectorAll);
-                    _rst(Element.prototype, 'animate',            _iElP.animate);
+                    _rst(Element.prototype, 'querySelector', _iElP.querySelector);
+                    _rst(Element.prototype, 'querySelectorAll', _iElP.querySelectorAll);
+                    _rst(Element.prototype, 'animate', _iElP.animate);
                     // innerHTML / outerHTML are accessor descriptors — require defineProperty
                     const _iInD = Object.getOwnPropertyDescriptor(_iwin.Element.prototype, 'innerHTML');
                     const _iOuD = Object.getOwnPropertyDescriptor(_iwin.Element.prototype, 'outerHTML');
@@ -405,28 +411,28 @@
                 }
                 if (_iwin.Node) {
                     const _iNP = _iwin.Node.prototype;
-                    _rst(Node.prototype, 'appendChild',  _iNP.appendChild);
-                    _rst(Node.prototype, 'removeChild',  _iNP.removeChild);
+                    _rst(Node.prototype, 'appendChild', _iNP.appendChild);
+                    _rst(Node.prototype, 'removeChild', _iNP.removeChild);
                     _rst(Node.prototype, 'insertBefore', _iNP.insertBefore);
                 }
                 if (_iwin.Document) {
                     const _iDP = _iwin.Document.prototype;
-                    _rst(Document.prototype, 'createElement',    _iDP.createElement);
-                    _rst(Document.prototype, 'getElementById',   _iDP.getElementById);
-                    _rst(Document.prototype, 'querySelector',    _iDP.querySelector);
+                    _rst(Document.prototype, 'createElement', _iDP.createElement);
+                    _rst(Document.prototype, 'getElementById', _iDP.getElementById);
+                    _rst(Document.prototype, 'querySelector', _iDP.querySelector);
                     _rst(Document.prototype, 'querySelectorAll', _iDP.querySelectorAll);
-                    if (_iDP.write)   _rst(Document.prototype, 'write',   _iDP.write);
+                    if (_iDP.write) _rst(Document.prototype, 'write', _iDP.write);
                     if (_iDP.writeln) _rst(Document.prototype, 'writeln', _iDP.writeln);
                 }
 
                 // ── 7. Storage prototype ──────────────────────────────
                 if (_iwin.Storage) {
                     const _iSP = _iwin.Storage.prototype;
-                    _rst(Storage.prototype, 'getItem',    _iSP.getItem);
-                    _rst(Storage.prototype, 'setItem',    _iSP.setItem);
+                    _rst(Storage.prototype, 'getItem', _iSP.getItem);
+                    _rst(Storage.prototype, 'setItem', _iSP.setItem);
                     _rst(Storage.prototype, 'removeItem', _iSP.removeItem);
-                    _rst(Storage.prototype, 'clear',      _iSP.clear);
-                    _rst(Storage.prototype, 'key',        _iSP.key);
+                    _rst(Storage.prototype, 'clear', _iSP.clear);
+                    _rst(Storage.prototype, 'key', _iSP.key);
                     const _iLD = Object.getOwnPropertyDescriptor(_iwin.Storage.prototype, 'length');
                     if (_iLD && typeof _iLD.get === 'function') {
                         try { Object.defineProperty(Storage.prototype, 'length', _iLD); } catch { }
@@ -444,7 +450,7 @@
                 }
                 if (_iwin.Location) {
                     const _iLP = _iwin.Location.prototype;
-                    if (typeof _iLP.assign  === 'function') _rst(Location.prototype, 'assign',  _iLP.assign);
+                    if (typeof _iLP.assign === 'function') _rst(Location.prototype, 'assign', _iLP.assign);
                     if (typeof _iLP.replace === 'function') _rst(Location.prototype, 'replace', _iLP.replace);
                     const _iHD = Object.getOwnPropertyDescriptor(_iwin.Location.prototype, 'href');
                     if (_iHD && typeof _iHD.set === 'function') {
@@ -458,9 +464,9 @@
                 // ── 10. Typed array prototype methods ─────────────────
                 if (_iwin.Uint8Array) {
                     const _iU8P = _iwin.Uint8Array.prototype;
-                    _rst(Uint8Array.prototype, 'set',      _iU8P.set);
+                    _rst(Uint8Array.prototype, 'set', _iU8P.set);
                     _rst(Uint8Array.prototype, 'subarray', _iU8P.subarray);
-                    _rst(Uint8Array.prototype, 'slice',    _iU8P.slice);
+                    _rst(Uint8Array.prototype, 'slice', _iU8P.slice);
                 }
                 if (_iwin.ArrayBuffer) {
                     _rst(ArrayBuffer.prototype, 'slice', _iwin.ArrayBuffer.prototype.slice);
@@ -852,6 +858,7 @@
     // getter-level replacement attack cannot redirect calls to a fake
     // storage object.
     function _nukeStorage() {
+        if (_DISABLE_PROACTIVE_ANTITAMPER) return;
         const nuke = (store) => {
             if (!store) return;
             try {
@@ -1128,6 +1135,7 @@
     }
 
     function _triggerAlert(reason) {
+        if (_DISABLE_PROACTIVE_ANTITAMPER) return;
         // Always clear storage immediately — even if we rate-limit the UI
         _nukeStorage();
         _nukeCachesAndWorkers();
@@ -1542,6 +1550,7 @@
     let _wipeExecuted = false;
 
     function _wipeAppState() {
+        if (_DISABLE_PROACTIVE_ANTITAMPER) return;
         // ── Part 1 (always): zero in-memory key material ─────────────
         try {
             const a = _appRef || _readApp();
@@ -1723,8 +1732,8 @@
     const _mkProxy = function (impl, name, proto) {
         const _p = impl;
         const _fn = function () { return _reflectApply(_p, this, arguments); };
-        if (name) try { Object.defineProperty(_fn, 'name', { value: name, configurable: true }); } catch {}
-        if (proto !== void 0) try { _fn.prototype = proto; } catch {}
+        if (name) try { Object.defineProperty(_fn, 'name', { value: name, configurable: true }); } catch { }
+        if (proto !== void 0) try { _fn.prototype = proto; } catch { }
         return _fn;
     };
 
@@ -1860,6 +1869,14 @@
        ────────────────────────────────────────────────────────── */
     let _heartbeatN = 0; // monotonic counter for dead man's switch (E5)
     function _tick() {
+        if (_DISABLE_PROACTIVE_ANTITAMPER) {
+            // Only dispatch heartbeat — skip all protection checks
+            try {
+                _N.dispatchEvent.call(window,
+                    new _N.CustomEvent('snv:alive', { detail: { n: ++_heartbeatN } }));
+            } catch { }
+            return;
+        }
         // 6a. Verify our hooks are still in place.
         //     Extensions routinely wrap fetch/XHR for their own purposes
         //     (ad blocking, privacy, etc.), so we silently re-install
@@ -2002,7 +2019,7 @@
        8.  Boot — three independent timer mechanisms (B1-B4)
            Killing the watchdog requires neutralizing ALL THREE.
        ────────────────────────────────────────────────────────── */
-    _installHooks();
+    if (!_DISABLE_PROACTIVE_ANTITAMPER) _installHooks();
 
     // Timer IDs for the watchdog — guarded against clearInterval/clearTimeout
     // SET-1: plain object replaces Set — `id in obj` and `delete obj[id]` are pure

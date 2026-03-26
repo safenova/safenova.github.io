@@ -185,20 +185,49 @@ async function _getOrCreateKeyPartIDB() {
                     get.onsuccess = () => {
                         try {
                             const rec = get.result;
-                            // Defensive: IDB structured clone may return ArrayBuffer,
-                            // DataView, or Uint8Array depending on browser internals
                             const val = rec?.value;
-                            const bytes = val instanceof Uint8Array ? val
-                                : val instanceof ArrayBuffer ? new Uint8Array(val)
-                                    : (val?.buffer instanceof ArrayBuffer ? new Uint8Array(val.buffer) : null);
+                            let bytes = null, needsMigration = false;
+
+                            if (typeof val === 'string' && val.length > 0) {
+                                // Current format: base64 string — immune to cross-realm
+                                // instanceof issues caused by daemon.js iframe restoration
+                                try { bytes = Uint8Array.from(atob(val), c => c.charCodeAt(0)); } catch { }
+                            } else if (val && typeof val === 'object') {
+                                // Legacy format: raw typed array stored before base64 migration.
+                                // daemon.js replaces window.Uint8Array/ArrayBuffer with iframe
+                                // copies, but IDB structured clone deserializes into the original
+                                // realm's constructors — instanceof fails across realms.
+                                // Indexed element access (pure language operator) is realm-safe.
+                                needsMigration = true;
+                                const len = typeof val.length === 'number' ? val.length
+                                    : typeof val.byteLength === 'number' ? val.byteLength : 0;
+                                if (len === 32 && typeof val[0] === 'number') {
+                                    bytes = new Uint8Array(32);
+                                    for (let i = 0; i < 32; i++) bytes[i] = val[i];
+                                }
+                            }
+
                             if (bytes && bytes.length === 32) {
-                                db.close();
-                                done(bytes);
+                                if (needsMigration) {
+                                    // Migrate legacy binary → base64 for future reads
+                                    const b64 = btoa(String.fromCharCode(...bytes));
+                                    try {
+                                        const tx2 = db.transaction('keys', 'readwrite');
+                                        tx2.objectStore('keys').put({ id: 'snv-ki', value: b64 });
+                                        tx2.oncomplete = () => { db.close(); done(bytes); };
+                                        tx2.onerror = () => { db.close(); done(bytes); };
+                                    } catch { db.close(); done(bytes); }
+                                } else {
+                                    db.close();
+                                    done(bytes);
+                                }
                             } else {
-                                const bytes = crypto.getRandomValues(new Uint8Array(32));
+                                // Generate new key part and store as base64 string
+                                const newBytes = crypto.getRandomValues(new Uint8Array(32));
+                                const b64 = btoa(String.fromCharCode(...newBytes));
                                 const tx2 = db.transaction('keys', 'readwrite');
-                                tx2.objectStore('keys').put({ id: 'snv-ki', value: bytes });
-                                tx2.oncomplete = () => { db.close(); done(bytes); };
+                                tx2.objectStore('keys').put({ id: 'snv-ki', value: b64 });
+                                tx2.oncomplete = () => { db.close(); done(newBytes); };
                                 tx2.onerror = () => { db.close(); fail(tx2.error); };
                             }
                         } catch (err) { try { db.close(); } catch { } fail(err); }

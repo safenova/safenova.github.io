@@ -27,14 +27,29 @@ let _alogSaveTimer = null, _alogRafId = null, _alogFilters = null;
 let _activityLog = []; // in-memory ring buffer; never stored raw on the container
 
 // ── Compression (deflate, built-in, zero-dependency) ────────
-async function _compressLog(arr) {
-    const json = JSON.stringify(arr),
-        cs = new Blob([json]).stream().pipeThrough(new CompressionStream('deflate'));
+async function _compressBytes(bytes) {
+    const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
     return new Uint8Array(await new Response(cs).arrayBuffer());
 }
-async function _decompressLog(bytes) {
+async function _decompressBytes(bytes) {
     const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
-    return JSON.parse(await new Response(ds).text());
+    return new Uint8Array(await new Response(ds).arrayBuffer());
+}
+// Compress with a 5 s safety timeout — returns compressed bytes on success,
+// or the original bytes unchanged if compression fails or times out.
+async function _compressBytesOrRaw(bytes) {
+    try {
+        return await Promise.race([
+            _compressBytes(bytes),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('compress timeout')), 5000))
+        ]);
+    } catch { return bytes; }
+}
+async function _compressLog(arr) {
+    return _compressBytes(new TextEncoder().encode(JSON.stringify(arr)));
+}
+async function _decompressLog(bytes) {
+    return JSON.parse(new TextDecoder().decode(await _decompressBytes(bytes)));
 }
 async function _loadActivityLog() {
     const pending = _activityLog.length ? _activityLog.slice() : [];
