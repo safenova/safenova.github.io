@@ -990,7 +990,8 @@ function openViewer(node, buf, mime) {
 
     document.getElementById('viewer-title').textContent = node.name;
     document.getElementById('btn-download-viewer').onclick = () => {
-        const a = document.createElement('a'); a.href = url; a.download = node.name; a.click();
+        const a = document.createElement('a'); a.href = url; a.download = node.name;
+        document.body.appendChild(a); a.click(); a.remove();
     };
 
     if (isImage(mime)) {
