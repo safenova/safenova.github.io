@@ -541,6 +541,20 @@ const App = {
         Overlay.hide();
         const cid = this.container?.id;
         if (cid) { _stopContainerSession(cid); clearSession(cid); }
+        // Null out heavy blobs in the container record before releasing the key.
+        // _alogZ and lazyWorkspace accumulate as persistent orphans in IDB if not
+        // explicitly cleared — Chrome's lazy blob GC won't reclaim them promptly.
+        // NOTE: _exportCache is intentionally kept — it allows passwordless export
+        // even after lock. It is cleaned by _cleanOrphanedExportCache() on unlock
+        // (if the setting was disabled) and by nukeContainer() on full delete.
+        try {
+            const c = this.container;
+            if (c && (c._alogZ || c.lazyWorkspace)) {
+                c._alogZ = null;
+                c.lazyWorkspace = null;
+                await DB.saveContainer(c);
+            }
+        } catch { /* non-critical — proceed to lock even if IDB write fails */ }
         this.key = null;
         this.container = null;
         this.folder = 'root';
@@ -643,11 +657,13 @@ async function updateStorageInfo() {
         if (!navigator.storage?.estimate) return;
         const est = await navigator.storage.estimate();
         const used = est.usage || 0,
-            quota = est.quota || 0,
-            available = quota - used;
+            quota = est.quota || 0;
 
-        // Cap the visual scale at DEVICE_LIMIT (20 GB)
+        // Cap the visual scale at DEVICE_LIMIT (20 GB).
+        // available = free space remaining within SafeNova's own limit,
+        // not the full browser quota — other origin data is irrelevant here.
         const displayMax = Math.min(quota > 0 ? quota : DEVICE_LIMIT, DEVICE_LIMIT),
+            available = displayMax - used,
             pct = displayMax > 0 ? Math.min((used / displayMax) * 100, 100) : 0;
 
         const fill = document.getElementById('storage-bar-fill'),
@@ -703,7 +719,11 @@ async function checkStorageSpace(needed) {
     try {
         if (!navigator.storage?.estimate) return { ok: true, available: Infinity };
         const est = await navigator.storage.estimate(),
-            available = (est.quota || 0) - (est.usage || 0);
+            quota = est.quota || 0,
+            used = est.usage || 0,
+            // Check against SafeNova's 20 GB limit (capped at device quota if lower)
+            displayMax = Math.min(quota > 0 ? quota : DEVICE_LIMIT, DEVICE_LIMIT),
+            available = displayMax - used;
         // Keep 50 MB safety margin
         if (available - needed < 50 * 1024 * 1024) {
             return { ok: false, available };

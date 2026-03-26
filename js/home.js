@@ -917,7 +917,8 @@ async function deleteContainerConfirmed() {
     Overlay.hide();
     try {
         await DB.nukeContainer(c.id);
-        // Also clear any remembered session for this container
+        // Clear all session tokens and the tab-coordinator claim for this container
+        _stopContainerSession(c.id);
         clearSession(c.id);
         hideLoading();
         await Home.render();
