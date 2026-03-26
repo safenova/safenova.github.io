@@ -302,11 +302,11 @@ async function _getOrCreateBrowserScopeKey() {
     }
     const stored = localStorage.getItem('snv-bsk');
     if (stored) {
-        const blobBytes = Uint8Array.from(atob(stored), ch => ch.charCodeAt(0));
-        // Legacy format (pre-fingerprint-wrap): exactly 32 raw bytes, no IV prefix.
-        // Migrate on-the-fly: import the raw key, re-wrap it, overwrite localStorage.
-        if (blobBytes.length === 32) {
-            try {
+        try {
+            const blobBytes = Uint8Array.from(atob(stored), ch => ch.charCodeAt(0));
+            // Legacy format (pre-fingerprint-wrap): exactly 32 raw bytes, no IV prefix.
+            // Migrate on-the-fly: import the raw key, re-wrap it, overwrite localStorage.
+            if (blobBytes.length === 32) {
                 const legacyKey = await crypto.subtle.importKey('raw', blobBytes, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']),
                     rawExported = await crypto.subtle.exportKey('raw', legacyKey),
                     wrapIV = crypto.getRandomValues(new Uint8Array(12)),
@@ -318,17 +318,14 @@ async function _getOrCreateBrowserScopeKey() {
                 _browserScopeKey = await crypto.subtle.importKey('raw', rawExported, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
                 InitLog.done('browser-scope-key', 'legacy-migrated');
                 return _browserScopeKey;
-            } catch { /* corrupted legacy key — regenerate below */ }
-        } else {
+            }
             // Current format: IV(12) + AES-GCM(CT) wrapping the 32-byte raw key
-            try {
-                const iv = blobBytes.slice(0, 12), ct = blobBytes.slice(12);
-                const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, ct);
-                _browserScopeKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-                InitLog.done('browser-scope-key', 'existing');
-                return _browserScopeKey;
-            } catch { /* fingerprint changed or corrupted — regenerate below */ }
-        }
+            const iv = blobBytes.slice(0, 12), ct = blobBytes.slice(12);
+            const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrapKey, ct);
+            _browserScopeKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+            InitLog.done('browser-scope-key', 'existing');
+            return _browserScopeKey;
+        } catch { /* corrupted, stale wrap-key, or invalid base64 — regenerate below */ }
     }
     // Generate fresh snv-bsk and wrap it with the browser-specific key before storing
     const raw = crypto.getRandomValues(new Uint8Array(32)),
