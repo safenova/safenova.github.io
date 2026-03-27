@@ -37,17 +37,17 @@ function detectIncognito() {
             return id;
         }
 
-        function isSafari()  { const f = feid(); return f === 44 || f === 43; }
-        function isChrome()  { return feid() === 51; }
+        function isSafari() { const f = feid(); return f === 44 || f === 43; }
+        function isChrome() { return feid() === 51; }
         function isFirefox() { return feid() === 25; }
-        function isMSIE()    { return navigator.msSaveBlob !== undefined; }
+        function isMSIE() { return navigator.msSaveBlob !== undefined; }
 
         function identifyChromium() {
             const ua = navigator.userAgent;
             if (ua.match(/Chrome/)) {
                 if (navigator.brave !== undefined) return 'Brave';
-                if (ua.match(/Edg/))  return 'Edge';
-                if (ua.match(/OPR/))  return 'Opera';
+                if (ua.match(/Edg/)) return 'Edge';
+                if (ua.match(/OPR/)) return 'Opera';
                 return 'Chrome';
             }
             return 'Chromium';
@@ -119,7 +119,7 @@ function detectIncognito() {
         function storageQuotaChromePrivateTest() {
             navigator.webkitTemporaryStorage.queryUsageAndQuota(
                 function (_used, quota) {
-                    const quotaInMib      = Math.round(quota / (1024 * 1024));
+                    const quotaInMib = Math.round(quota / (1024 * 1024));
                     const quotaLimitInMib = Math.round(getQuotaLimit() / (1024 * 1024)) * 2;
                     __callback(quotaInMib < quotaLimitInMib);
                 },

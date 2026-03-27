@@ -251,6 +251,9 @@
     const _canUseIframe = _isNative(_docCreateEl) && _isNative(_nodeAppend) && _isNative(_nodeRemove);
 
     let _ifrConsoleErr = null;
+    // D3: set to true after the init-phase iframe is removed — enables post-init
+    // <iframe> creation block in _createElementImpl.
+    let _iframeRestoreDone = false;
 
     if (_canUseIframe) {
         try {
@@ -492,6 +495,8 @@
             _reflectApply(_nodeRemove, document.documentElement, [_ifr]);
         } catch { /* frame-src CSP blocked, DOM unavailable — fall back to direct captures */ }
     }
+    // D3: all init-phase iframe work is complete — block future iframe creation
+    _iframeRestoreDone = true;
 
     /* ──────────────────────────────────────────────────────────
        1.  Lock in native references
@@ -1312,6 +1317,29 @@
         return _N.docWriteln.apply(this, arguments);
     };
 
+    // ── D3: post-init iframe creation block ───────────────────
+    // An attacker who gains JS execution after daemon.js runs could:
+    //   1. document.createElement('iframe') → fresh about:blank realm
+    //   2. grab iwin.fetch / iwin.XMLHttpRequest.prototype.open etc.
+    //      (they ARE native, so _isNative() passes them)
+    //   3. assign them back over the hooked prototypes → all network/DOM
+    //      hooks silently stripped without triggering any _NATIVE_CHECKS alert
+    // Blocking <iframe> creation post-init closes this entire attack vector.
+    // All other tags pass through unmodified — extensions that create <script>
+    // or other elements for their own purposes are unaffected.
+    const _createElementImpl = function (tagName) {
+        if (_iframeRestoreDone) {
+            const _tag = ('' + (tagName ?? '')).toLowerCase();
+            if (_tag === 'iframe') {
+                _triggerAlert('iframe creation blocked post-init \u2192 native-reset attack vector');
+                // Return a harmless <div> so the call site does not throw,
+                // minimising fingerprinting surface for the attacker.
+                return _N.createElement.call(this, 'div');
+            }
+        }
+        return _N.createElement.apply(this, arguments);
+    };
+
     const _locAssignImpl = function (url) {
         if (_isExternal('' + (url ?? ''))) {
             _triggerAlert('External navigation (assign) blocked \u2192 ' + url); return;
@@ -1858,10 +1886,13 @@
         // they are navigation-only attributes (require user click) and blocking them
         // causes false positives on legitimate external links in the app UI.
 
-        // document.createElement is intentionally NOT hooked.
-        // Extensions (Adblock, Dark Reader, etc.) legitimately create
-        // <script> elements for their content scripts — blocking this
-        // causes widespread false positives on every page load.
+        // D3: Restricted createElement hook — only <iframe> is blocked post-init.
+        // Extensions (Adblock, Dark Reader, etc.) that create <script> or other
+        // elements are unaffected; _createElementImpl passes all non-iframe tags
+        // straight through to the native. The 'iframe' tag is the only primitive
+        // needed for the fresh-realm native-reset attack, so it alone is blocked.
+        _H.createElement = _mkProxy(_createElementImpl, 'snvCreateElement');
+        Document.prototype.createElement = _H.createElement;
     }
 
     /* ──────────────────────────────────────────────────────────
@@ -1892,7 +1923,9 @@
             (_H.docWrite && Document.prototype.write !== _H.docWrite) ||
             (_H.docWriteln && Document.prototype.writeln !== _H.docWriteln) ||
             (_H.locAssign && Location.prototype.assign !== _H.locAssign) ||
-            (_H.locReplace && Location.prototype.replace !== _H.locReplace);
+            (_H.locReplace && Location.prototype.replace !== _H.locReplace) ||
+            // D3: guard the post-init iframe-creation block
+            (_H.createElement && Document.prototype.createElement !== _H.createElement);
 
         if (hookTampered) {
             _installHooks(); // silent re-hook, no alert
