@@ -1807,6 +1807,81 @@ textarea.code-editor::-webkit-scrollbar-thumb {
 }
 
 /* ============================================================
+   INCOGNITO WARNING
+   ============================================================ */
+.incognito-warning {
+    position: fixed;
+    inset: 0;
+    z-index: 10001;
+    background: rgba(30, 30, 30, 0.88);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+.incognito-warning-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--orange);
+    border-radius: var(--r);
+    padding: 20px 22px 16px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: var(--shadow);
+}
+.incognito-warning-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+.incognito-warning-header svg {
+    flex-shrink: 0;
+}
+.incognito-warning-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+.incognito-warning-body {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    line-height: 1.7;
+    margin-bottom: 16px;
+    padding-left: 32px;
+}
+.incognito-warning-body p {
+    margin-bottom: 8px;
+}
+.incognito-warning-body ul {
+    padding-left: 16px;
+    margin-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.incognito-warning-body li strong {
+    color: var(--text);
+}
+.incognito-warning-recommend {
+    display: block;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border-left: 2px solid var(--accent2);
+    color: var(--accent2);
+    font-size: 11.5px;
+    line-height: 1.5;
+    margin-top: 10px;
+    margin-bottom: 0 !important;
+}
+.incognito-warning-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+}
+
+/* ============================================================
    MISC
    ============================================================ */
 .badge {

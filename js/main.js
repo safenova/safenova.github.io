@@ -333,6 +333,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     InitLog.done('initEvents');
     try {
         await App.init();
+        // Incognito / private-mode check — show warning once per session
+        if (!sessionStorage.getItem('snv-incognito-warned')) {
+            const { isPrivate } = await detectIncognito();
+            if (isPrivate) {
+                await showIncognitoWarning();
+                sessionStorage.setItem('snv-incognito-warned', '1');
+            }
+        }
     } catch (err) {
         InitLog.error('App.init', err);
         // Show a visible error instead of leaving the user on a grey screen
