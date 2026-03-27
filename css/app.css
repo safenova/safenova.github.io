@@ -182,7 +182,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--r);
     background: var(--bg2);
-    max-width: 340px;
+    max-width: 420px;
     padding: 11px 14px 12px;
     display: flex;
     flex-direction: column;
@@ -193,7 +193,7 @@ body {
         max-height 0.3s ease,
         opacity 0.22s ease,
         padding 0.3s ease;
-    max-height: 400px;
+    max-height: 500px;
     opacity: 1;
 }
 .home-doc.collapsed {
