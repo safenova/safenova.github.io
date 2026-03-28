@@ -370,9 +370,13 @@ window.addEventListener('DOMContentLoaded', async () => {
 // F2: Call __snvEmergencyLock first — directly nukes storage and zeroes app state
 // regardless of whether App.lockContainer was patched. Then also try lockContainer
 // for full UI cleanup (close file editor, show lock screen).
-window.addEventListener('snv:lock', () => {
+// The reason from e.detail is shown as a toast so the user always sees why the
+// container locked — even when _showAlert is blocked by its 10 s rate-limit.
+window.addEventListener('snv:lock', e => {
     try { window.__snvEmergencyLock?.(); } catch { }
     if (typeof App !== 'undefined' && App.container) {
+        const reason = e?.detail?.reason;
+        if (typeof reason === 'string' && reason) toast(reason, 'warn');
         App.lockContainer();
     }
 });
@@ -399,13 +403,18 @@ window.addEventListener('snv:lock', () => {
             _lastAlive = Date.now();
         }
     });
+    let _dmsLocking = false;
     setInterval(() => {
-        if (Date.now() - _lastAlive > 3000 && typeof App !== 'undefined' && App.container) {
+        if (Date.now() - _lastAlive > 3000 && typeof App !== 'undefined' && App.container && !_dmsLocking) {
             // F2: __snvEmergencyLock nukes storage and zeroes app state directly,
             // bypassing a patched App.lockContainer. Then still try lockContainer
             // for UI cleanup (close editor, show lock screen).
+            // _dmsLocking prevents re-entrant fires while lockContainer is still
+            // running asynchronously (interval period < async completion time).
+            _dmsLocking = true;
             try { window.__snvEmergencyLock?.(); } catch { }
-            App.lockContainer();
+            toast('Security guard stopped responding — container locked for safety.', 'warn');
+            App.lockContainer().finally(() => { _dmsLocking = false; });
         }
     }, 1000);
 })();
@@ -435,15 +444,18 @@ window.addEventListener('storage', e => {
 });
 
 // Release the session claim on tab close / navigation.
-// Both beforeunload (desktop) and pagehide (mobile / bfcache) are needed.
-// If an operation is in progress (upload, encrypt, import, etc.), warn
-// the user before closing — prevents data corruption from interrupted writes.
+// beforeunload (desktop) shows a dialog when an operation is in progress.
+// pagehide (mobile / bfcache) fires on navigation but is NOT cancelable —
+// calling e.preventDefault() or setting e.returnValue here is a spec no-op,
+// so it only handles session cleanup.
 function _onTabUnload(e) {
     if (_appBusy > 0) { e.preventDefault(); e.returnValue = ''; }
     if (App.container?.id) _stopContainerSession(App.container.id);
 }
 window.addEventListener('beforeunload', _onTabUnload);
-window.addEventListener('pagehide', _onTabUnload);
+window.addEventListener('pagehide', () => {
+    if (App.container?.id) _stopContainerSession(App.container.id);
+});
 
 /* ============================================================
    SETTINGS HINT TOOLTIPS

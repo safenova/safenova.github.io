@@ -565,6 +565,10 @@ const App = {
         if (typeof closeViewer === 'function') closeViewer();
         if (typeof discardEditor === 'function') discardEditor();
         Overlay.hide();
+        // Drain the loading counter: snv:lock / dead man's switch / cross-tab kick can fire
+        // mid-operation (while _appBusy > 0). Without an explicit reset, beforeunload would
+        // keep showing the "unsaved changes" dialog long after the container is locked.
+        while (_appBusy > 0) hideLoading();
         const cid = this.container?.id;
         if (cid) { _stopContainerSession(cid); clearSession(cid); }
         // Null out heavy blobs in the container record before releasing the key.

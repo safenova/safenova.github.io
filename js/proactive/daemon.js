@@ -29,7 +29,7 @@
    4. Install protective hooks on outbound network, DOM, and eval APIs:
         • fetch / XMLHttpRequest.open / navigator.sendBeacon
         • WebSocket / window.open / EventSource
-        • Worker / SharedWorker (data: + external URL blocked)
+        • Worker / SharedWorker (data: + blob: + external URL blocked)
         • window.eval / new Function() constructor (E15/E16)
         • setTimeout / setInterval string callbacks (E14)
         • Element.setAttribute / innerHTML / outerHTML
@@ -40,11 +40,11 @@
           link / anchor / area prototypes
         → MutationObserver defense-in-depth on entire document tree
 
-   5. Watchdog resilience — three independent timer mechanisms
-      (setInterval, recursive setTimeout, rAF chain) make it
-      impossible to kill the watchdog without page-level control.
-      clearInterval/clearTimeout are guarded — attempts to clear
-      watchdog timer IDs are silently ignored.
+   5. Watchdog resilience — four independent timer mechanisms
+      (setInterval, recursive setTimeout, rAF chain, MessageChannel
+      self-ping) make it impossible to kill the watchdog without
+      page-level control. clearInterval/clearTimeout are guarded —
+      attempts to clear watchdog timer IDs are silently ignored.
 
    6. Dead man's switch — every tick dispatches 'snv:alive'.
       main.js monitors the heartbeat; if >3 s silence → auto-lock.
@@ -101,7 +101,8 @@
    snapshot rather than live globals, loop counters use indexed `for`
    instead of iterator-based `for…of`, property lookups use the `in`
    operator instead of hookable Set/Map methods, and string operations
-   use captured `slice` / `indexOf` rather than live prototype calls.
+   use captured `slice` / `indexOf` / `toLowerCase` rather than live
+   prototype calls.
    As a direct result, the integrity-checking core is well-isolated
    and resistant to most hook-based attacks: replacing window.fetch,
    Array.prototype.push, or other live globals after page load cannot
@@ -122,18 +123,26 @@
        0.  Earliest possible capture — before anything else runs
        ────────────────────────────────────────────────────────── */
 
-    // BUG-A/B/C/D/F: Capture security-critical Object/Array/String/RegExp methods at
+    // BUG-A/B/C/D/F/J/K: Capture security-critical Object/Array/String/RegExp methods at
     // the very first line — before any code can replace them.  These are IIFE-private
     // const bindings (non-reassignable) used as safe alternatives to live prototype
     // calls throughout the guard.
-    //   _freeze   → Object.freeze — used to freeze _N (BUG-D)
-    //   _reTest   → RegExp.prototype.test — used in _isNative & bootstrap (BUG-A)
-    //   _arrPush  → Array.prototype.push — safe array append (BUG-F)
-    //   _strSlice → String.prototype.slice — prefix check in _nukeStorage (BUG-C)
+    //   _freeze     → Object.freeze — used to freeze _N (BUG-D)
+    //   _reTest     → RegExp.prototype.test — used in _isNative & bootstrap (BUG-A)
+    //   _arrPush    → Array.prototype.push — safe array append (BUG-F)
+    //   _strSlice   → String.prototype.slice — prefix check in _nukeStorage (BUG-C)
+    //   _strToLower → String.prototype.toLowerCase — tag/attribute name normalization in
+    //                 DOM exfiltration hooks; replacing with identity passes ONCLICK/SRC
+    //                 uppercase through every on* and resource-attribute check (BUG-K)
+    //   _strIndexOf → String.prototype.indexOf — HTML threat scanner early-exit and
+    //                 attribute extraction; replacing with () => -1 disables the entire
+    //                 scanner and breaks Worker data:/blob: URL blocking (BUG-J)
     const _freeze = Object.freeze;
     const _reTest = RegExp.prototype.test;
     const _arrPush = Array.prototype.push;
     const _strSlice = String.prototype.slice;
+    const _strToLower = String.prototype.toLowerCase;
+    const _strIndexOf = String.prototype.indexOf;
 
     // Capture Function.prototype.toString before anyone can spoof it.
     // All subsequent "is this native?" checks use this reference directly.
@@ -685,8 +694,8 @@
         _N.reflectApply,
         // CRIT-3/4: event subscription and dispatch must be native
         _N.addEventListener, _N.dispatchEvent,
-        // BUG-A/C/D/F: newly-captured Array/String/Object/RegExp methods
-        _reTest, _freeze, _arrPush, _strSlice,
+        // BUG-A/C/D/F/J/K: newly-captured Array/String/Object/RegExp methods
+        _reTest, _freeze, _arrPush, _strSlice, _strToLower, _strIndexOf,
         // DOM exfiltration — core methods (D2)
         _N.setAttribute, _N.getAttribute, _N.formSubmit,
     ];
@@ -737,7 +746,9 @@
         (typeof _reTest !== 'function' || _reTest.name !== 'test' ||
             typeof _freeze !== 'function' || _freeze.name !== 'freeze' ||
             typeof _arrPush !== 'function' || _arrPush.name !== 'push' ||
-            typeof _strSlice !== 'function' || _strSlice.name !== 'slice')) {
+            typeof _strSlice !== 'function' || _strSlice.name !== 'slice' ||
+            typeof _strToLower !== 'function' || _strToLower.name !== 'toLowerCase' ||
+            typeof _strIndexOf !== 'function' || _strIndexOf.name !== 'indexOf')) {
         _captureClean = false;
     }
     // Factor in pre-existence of __snvGuard — indicates attacker setup
@@ -845,6 +856,11 @@
     _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Array.prototype[Symbol.iterator]', () => Array.prototype[Symbol.iterator]];
     // DOM exfiltration — getAttribute must stay native (used by MO defense layer)
     _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Element.prototype.getAttribute', () => Element.prototype.getAttribute];
+    // BUG-J/K: toLowerCase and indexOf — used throughout DOM exfiltration hooks;
+    // replacing either post-boot bypasses attribute/tag-name checks or the entire
+    // HTML threat scanner early-exit and attribute extraction logic.
+    _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['String.prototype.toLowerCase', () => String.prototype.toLowerCase];
+    _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['String.prototype.indexOf', () => String.prototype.indexOf];
 
     /* ──────────────────────────────────────────────────────────
        3.  Threat response
@@ -908,15 +924,25 @@
         try {
             if (window.caches && caches.keys) {
                 // Ignore returned Promises to evade potential Promise poisoning and await hangs
+                // BUG-I: indexed for-loops replace .forEach() — immune to
+                // Array.prototype.forEach replacement (same rationale as BUG-B/E).
                 caches.keys().then(keys => {
-                    if (keys && keys.length) keys.forEach(k => { try { caches.delete(k); } catch { } });
+                    if (keys && keys.length) {
+                        for (let _ki = 0; _ki < keys.length; _ki++) {
+                            try { caches.delete(keys[_ki]); } catch { }
+                        }
+                    }
                 }).catch(() => { });
             }
         } catch { }
         try {
             if (navigator && navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
                 navigator.serviceWorker.getRegistrations().then(regs => {
-                    if (regs && regs.length) regs.forEach(r => { try { r.unregister(); } catch { } });
+                    if (regs && regs.length) {
+                        for (let _ri = 0; _ri < regs.length; _ri++) {
+                            try { regs[_ri].unregister(); } catch { }
+                        }
+                    }
                 }).catch(() => { });
             }
         } catch { }
@@ -1177,7 +1203,10 @@
         try {
             const s = '' + urlStr;
             // data: URLs are inline resources (canvas thumbnails, etc.) — always safe
-            if (s.charCodeAt(0) === 100 && s.startsWith('data:')) return false;
+            // BUG-G: Use captured _strSlice (not live String.prototype.startsWith)
+            // so a post-boot startsWith replacement cannot make all 'd'-prefixed
+            // URLs bypass the origin check.
+            if (s.charCodeAt(0) === 100 && _reflectApply(_strSlice, s, [0, 5]) === 'data:') return false;
             const parsed = new _N.URL(s, window.location.href);
             const proto = parsed.protocol;
             // Browser-extension resources are injected by user-installed extensions
@@ -1185,7 +1214,7 @@
                 || proto === 'safari-web-extension:') return false;
             return parsed.origin !== _origin;
         } catch {
-            return false; // malformed URL — let the browser handle it
+            return true; // FAIL-CLOSED: unparseable URL is treated as external
         }
     }
 
@@ -1242,7 +1271,9 @@
 
     // ── setAttribute — blocks on* handlers and external resource URLs ──
     const _setAttributeImpl = function (name, value) {
-        const lName = ('' + (name ?? '')).toLowerCase();
+        // BUG-K: Use captured _strToLower (not live .toLowerCase()) so an attacker
+        // replacing the prototype method cannot make uppercase ONCLICK/SRC pass undetected.
+        const lName = _reflectApply(_strToLower, '' + (name ?? ''), []);
         if (lName.length > 2 && lName[0] === 'o' && lName[1] === 'n') {
             _triggerAlert('Inline event handler via setAttribute blocked \u2192 ' + lName);
             return;
@@ -1251,8 +1282,8 @@
         // not auto-loading. Blocking them causes false positives for normal app links.
         // ping= on anchors is still caught below (auto-fires on click).
         if (lName === 'href') {
-            const tag = ('' + (this.tagName || '')).toUpperCase();
-            if (tag === 'A' || tag === 'AREA') {
+            const tag = _reflectApply(_strToLower, '' + (this.tagName || ''), []);
+            if (tag === 'a' || tag === 'area') {
                 return _N.setAttribute.apply(this, arguments);
             }
         }
@@ -1268,27 +1299,34 @@
     function _htmlHasThreat(html) {
         const h = '' + (html ?? '');
         if (_reflectApply(_reTest, _ON_ATTR_RE, [h])) return 'inline event handler';
-        if (h.indexOf('://') === -1) return false;
+        // BUG-J: Use captured _strIndexOf — replacing live indexOf with () => -1
+        // causes this early-exit to always return false, bypassing the entire scanner.
+        if (_reflectApply(_strIndexOf, h, ['://']) === -1) return false;
         const _RATTR_KEYS = ['src=', 'href=', 'data=', 'ping=', 'action=', 'formaction=', 'poster=', 'srcset='];
-        const hLow = h.toLowerCase();
+        // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
+        // makes attribute names uppercase; hLow.indexOf(lowercase-attr) would miss them.
+        const hLow = _reflectApply(_strToLower, h, []);
         for (let _ri = 0; _ri < _RATTR_KEYS.length; _ri++) {
             const attr = _RATTR_KEYS[_ri];
             let apos = 0;
             while (true) {
-                apos = hLow.indexOf(attr, apos);
+                apos = _reflectApply(_strIndexOf, hLow, [attr, apos]);
                 if (apos === -1) break;
                 let vs = apos + attr.length;
                 while (vs < h.length && (h[vs] === ' ' || h[vs] === '\t')) vs++;
                 let ve;
                 if (h[vs] === '"' || h[vs] === "'") {
                     const q = h[vs]; vs++;
-                    ve = h.indexOf(q, vs);
+                    ve = _reflectApply(_strIndexOf, h, [q, vs]);
                     if (ve === -1) ve = h.length;
                 } else {
                     ve = vs;
                     while (ve < h.length && h[ve] !== ' ' && h[ve] !== '>' && h[ve] !== '\t') ve++;
                 }
-                const url = h.substring(vs, ve);
+                // BUG-L: Use captured _strSlice instead of live String.prototype.substring —
+                // replacing substring with () => '' makes every extracted URL appear empty,
+                // so _isExternal('') returns false and external URLs pass unchecked.
+                const url = _reflectApply(_strSlice, h, [vs, ve]);
                 if (_isExternal(url)) return attr + url;
                 apos = ve;
             }
@@ -1329,7 +1367,9 @@
     // or other elements for their own purposes are unaffected.
     const _createElementImpl = function (tagName) {
         if (_iframeRestoreDone) {
-            const _tag = ('' + (tagName ?? '')).toLowerCase();
+            // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
+            // makes 'IFRAME' !== 'iframe', bypassing the D3 post-init iframe block entirely.
+            const _tag = _reflectApply(_strToLower, '' + (tagName ?? ''), []);
             if (_tag === 'iframe') {
                 _triggerAlert('iframe creation blocked post-init \u2192 native-reset attack vector');
                 // Return a harmless <div> so the call site does not throw,
@@ -1434,12 +1474,15 @@
     // MutationObserver element threat scanner — checks a single element node.
     function _scanElementForThreats(el) {
         if (!el || el.nodeType !== 1) return;
-        const _elTag = ('' + (el.tagName || '')).toUpperCase();
+        // BUG-K: Use captured _strToLower + lowercase literals instead of live
+        // toUpperCase — replacing toUpperCase with identity would make 'script' tag
+        // comparisons miss injected <SCRIPT> elements passed through MutationObserver.
+        const _elTag = _reflectApply(_strToLower, '' + (el.tagName || ''), []);
         // <script> elements: only intercept external-src injections.
         // Same-origin and relative scripts (app's own modules) are allowed through.
         // Inline scripts have no src and are handled upstream by innerHTML/document.write hooks.
         // Full alert suppressed for scripts — console-only to avoid modal fatigue.
-        if (_elTag === 'SCRIPT') {
+        if (_elTag === 'script') {
             let _scriptSrc = '';
             try { _scriptSrc = '' + (_reflectApply(_N.getAttribute, el, ['src']) || ''); } catch { }
             if (_scriptSrc && _isExternal(_scriptSrc)) {
@@ -1453,10 +1496,10 @@
         // <a> and <area> href= are navigation attributes (user-clicked, not auto-loaded).
         // Flagging them causes false positives on legitimate app links (e.g. about/credits).
         // ping= on anchors is NOT skipped — it auto-fires a POST request on click.
-        const _isNavEl = (_elTag === 'A' || _elTag === 'AREA');
+        const _isNavEl = (_elTag === 'a' || _elTag === 'area');
         for (let _ai = 0; _ai < attrs.length; _ai++) {
             const _a = attrs[_ai];
-            const aName = ('' + _a.name).toLowerCase();
+            const aName = _reflectApply(_strToLower, '' + _a.name, []);
             if (aName.length > 2 && aName[0] === 'o' && aName[1] === 'n') {
                 try { el.removeAttribute(aName); } catch { }
                 _triggerAlert('Inline event handler on DOM element \u2192 ' + aName);
@@ -1773,9 +1816,21 @@
     function _mkCtorImpl(nativeCtor, label, blockData) {
         return function () {
             const urlStr = '' + (arguments[0] ?? '');
-            if (blockData && urlStr.indexOf('data:') === 0) {
+            // BUG-J: Use captured _strIndexOf — replacing live indexOf with () => -1
+            // would make data: and blob: Worker checks always fail, letting hostile
+            // Workers bypass both guards while still passing _isExternal (same-origin).
+            if (blockData && _reflectApply(_strIndexOf, urlStr, ['data:']) === 0) {
                 _triggerAlert(label + ' with data: URL blocked');
                 throw new Error('[SafeNova Proactive] ' + label + ' data: URL blocked');
+            }
+            // BUG-H: Block blob: URLs for Workers/SharedWorkers.  A same-origin
+            // blob: URL passes _isExternal (origin matches) but the Worker runs
+            // in a separate global with a clean, unhooked fetch — any code inside
+            // the blob can exfiltrate data without triggering page-level hooks.
+            // SafeNova never creates Workers; any blob: Worker is suspicious.
+            if (blockData && _reflectApply(_strIndexOf, urlStr, ['blob:']) === 0) {
+                _triggerAlert(label + ' with blob: URL blocked');
+                throw new Error('[SafeNova Proactive] ' + label + ' blob: URL blocked');
             }
             if (_isExternal(urlStr)) {
                 _triggerAlert(label + ' to external URL blocked \u2192 ' + urlStr);
@@ -1896,7 +1951,7 @@
     }
 
     /* ──────────────────────────────────────────────────────────
-       6.  Watchdog  (runs every 1 000 ms)
+       6.  Watchdog  (setInterval: 50 ms; other mechanisms: 800–980 ms)
        ────────────────────────────────────────────────────────── */
     let _heartbeatN = 0; // monotonic counter for dead man's switch (E5)
     function _tick() {
@@ -2049,8 +2104,8 @@
     if (!_captureClean) return;
 
     /* ──────────────────────────────────────────────────────────
-       8.  Boot — three independent timer mechanisms (B1-B4)
-           Killing the watchdog requires neutralizing ALL THREE.
+       8.  Boot — four independent timer mechanisms (B1-B4)
+           Killing the watchdog requires neutralizing ALL FOUR.
        ────────────────────────────────────────────────────────── */
     if (!_DISABLE_PROACTIVE_ANTITAMPER) _installHooks();
 
@@ -2063,8 +2118,8 @@
     const _wdQueue = [];       // insertion-order queue for trim; closed over, no external ref
     let _wdQHead = 0;          // soft-delete head — advances past already-removed entries
 
-    // ── Mechanism 1: setInterval (1 000 ms) ────────────────────
-    const _ivId = _N._setInterval.call(window, _tick, 1000);
+    // ── Mechanism 1: setInterval (50 ms) ───────────────────────
+    const _ivId = _N._setInterval.call(window, _tick, 50);
     _watchdogIds[_ivId] = 1; _watchdogCount++;
     _wdQueue[_wdQueue.length] = _ivId;
 
@@ -2172,7 +2227,9 @@
                     const parsed = new _N.URL(urlStr);
                     const proto = parsed.protocol;
                     if (proto !== 'ws:' && proto !== 'wss:') return false;
-                    return parsed.host.toLowerCase() === window.location.host.toLowerCase();
+                    // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
+                    // would make 'WSS://EVIL.COM' host comparisons always fail (pass as safe).
+                    return _reflectApply(_strToLower, parsed.host, []) === _reflectApply(_strToLower, window.location.host, []);
                 } catch { return false; }
             }());
             if (!isSameOrigin) {
@@ -2355,7 +2412,8 @@
                         }
                     }
                     if (_mut.type === 'attributes') {
-                        const _aName = ('' + (_mut.attributeName || '')).toLowerCase();
+                        // BUG-K: Use captured _strToLower for attribute name normalization.
+                        const _aName = _reflectApply(_strToLower, '' + (_mut.attributeName || ''), []);
                         const _tgt = _mut.target;
                         if (_tgt.nodeType !== 1) continue;
                         if (_aName.length > 2 && _aName[0] === 'o' && _aName[1] === 'n') {
@@ -2365,8 +2423,8 @@
                         }
                         // <a> and <area> href changes are navigation-only — not auto-loading resources
                         if (_aName === 'href') {
-                            const _tgtTag = ('' + (_tgt.tagName || '')).toUpperCase();
-                            if (_tgtTag === 'A' || _tgtTag === 'AREA') continue;
+                            const _tgtTag = _reflectApply(_strToLower, '' + (_tgt.tagName || ''), []);
+                            if (_tgtTag === 'a' || _tgtTag === 'area') continue;
                         }
                         if (_aName in _RESOURCE_ATTRS) {
                             let _val;
