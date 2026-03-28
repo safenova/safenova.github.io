@@ -101,14 +101,20 @@
    snapshot rather than live globals, loop counters use indexed `for`
    instead of iterator-based `for…of`, property lookups use the `in`
    operator instead of hookable Set/Map methods, and string operations
-   use captured `slice` / `indexOf` / `toLowerCase` rather than live
-   prototype calls.
+   use pure operator-level reimplementations (`_pureToLower`,
+   `_pureIndexOf`, `_pureSlice`) built entirely from bracket indexing,
+   `.length`, `+` concatenation, and comparison operators — zero
+   prototype method calls, immune to ANY prototype poisoning.
+   The original captured references (`_strSlice`, `_strToLower`,
+   `_strIndexOf`) are retained solely for boot-time and per-tick
+   native validation — they are never used for actual string operations.
    As a direct result, the integrity-checking core is well-isolated
    and resistant to most hook-based attacks: replacing window.fetch,
-   Array.prototype.push, or other live globals after page load cannot
-   change daemon behaviour — the daemon has already captured what it
-   needs, validates those captures on every tick, and would detect the
-   replacement before an attacker could leverage it.
+   Array.prototype.push, String.prototype.toLowerCase, or other live
+   globals after page load cannot change daemon behaviour — the daemon
+   uses only pure operators for string processing, validates captured
+   references on every tick, and would detect the replacement before
+   an attacker could leverage it.
    ============================================================ */
 
 (() => {
@@ -143,6 +149,68 @@
     const _strSlice = String.prototype.slice;
     const _strToLower = String.prototype.toLowerCase;
     const _strIndexOf = String.prototype.indexOf;
+
+    // ── Pure operator-level string utilities ──────────────────────
+    // Built entirely from language-level operators: bracket indexing (s[i]),
+    // .length (string internal slot — non-overridable), concatenation (+),
+    // comparison (===, >=, <=), and arithmetic.  ZERO prototype method calls.
+    //
+    // Why not just _reflectApply(_strSlice, …)?
+    //   That chain has two dependencies: captured Reflect.apply + captured
+    //   String.prototype.slice.  Both are validated native at boot and on
+    //   every tick, so the practical risk is near-zero.  But the pure
+    //   implementations remove even this theoretical dependency: they have
+    //   NO external call targets — the JS engine resolves bracket indexing
+    //   and `+` at the bytecode level, entirely outside the prototype
+    //   lookup mechanism.  An attacker who controls every prototype in the
+    //   runtime still cannot affect these functions.
+    //
+    // _LOWER_MAP — frozen A-Z → a-z lookup.  Own-property access via []
+    // uses the engine's internal hash table, NOT Object.prototype.
+    const _LOWER_MAP = _freeze({
+        A: 'a', B: 'b', C: 'c', D: 'd', E: 'e', F: 'f', G: 'g', H: 'h', I: 'i',
+        J: 'j', K: 'k', L: 'l', M: 'm', N: 'n', O: 'o', P: 'p', Q: 'q', R: 'r',
+        S: 's', T: 't', U: 'u', V: 'v', W: 'w', X: 'x', Y: 'y', Z: 'z'
+    });
+
+    // _pureToLower(s) — ASCII toLowerCase.
+    // Only A-Z (U+0041-U+005A) are mapped; all other code points pass through.
+    // Sufficient for daemon.js: HTML tag names, attribute names, URL protocols
+    // and hosts are always pure ASCII per the relevant W3C / WHATWG specs.
+    const _pureToLower = s => {
+        let r = '';
+        for (let i = 0, len = s.length; i < len; i++) {
+            const c = s[i];
+            r += (c >= 'A' && c <= 'Z') ? _LOWER_MAP[c] : c;
+        }
+        return r;
+    };
+
+    // _pureIndexOf(s, needle [, from]) — substring search via nested indexed loop.
+    // Returns first index of needle in s starting at from (default 0), or -1.
+    const _pureIndexOf = (s, needle, from) => {
+        const sLen = s.length, nLen = needle.length;
+        if (nLen === 0) return 0;
+        const start = (from !== void 0 && from > 0) ? from : 0;
+        const limit = sLen - nLen;
+        outer: for (let i = start; i <= limit; i++) {
+            for (let j = 0; j < nLen; j++) {
+                if (s[i + j] !== needle[j]) continue outer;
+            }
+            return i;
+        }
+        return -1;
+    };
+
+    // _pureSlice(s, start [, end]) — substring extraction via bracket + concatenation.
+    const _pureSlice = (s, start, end) => {
+        const len = s.length;
+        let a = start < 0 ? (len + start > 0 ? len + start : 0) : (start > len ? len : start);
+        let b = end === void 0 ? len : (end < 0 ? (len + end > 0 ? len + end : 0) : (end > len ? len : end));
+        let r = '';
+        for (let i = a; i < b; i++) r += s[i];
+        return r;
+    };
 
     // Capture Function.prototype.toString before anyone can spoof it.
     // All subsequent "is this native?" checks use this reference directly.
@@ -199,7 +267,9 @@
            We record this; __snvVerify will return false.
        ────────────────────────────────────────────────────────── */
     const _guardPreexisted = (function () {
-        try { return Object.prototype.hasOwnProperty.call(window, '__snvGuard'); } catch { return true; }
+        // V14: Use `in` operator (unhookable) instead of live
+        // Object.prototype.hasOwnProperty.call which goes through the prototype chain.
+        try { return '__snvGuard' in window; } catch { return true; }
     }());
 
     /* ──────────────────────────────────────────────────────────
@@ -617,6 +687,7 @@
         docGetElementById: Document.prototype.getElementById ?? null,
         docQuerySelector: Document.prototype.querySelector ?? null,
         docQuerySelectorAll: Document.prototype.querySelectorAll ?? null,
+        elQuerySelectorAll: Element.prototype.querySelectorAll ?? null,
 
         // Value setters — wipe decrypted plaintext from editor/input elements
         // without relying on the script-accessible .value property path which
@@ -635,6 +706,7 @@
         // DOM exfiltration defense — element methods (D2)
         setAttribute: Element.prototype.setAttribute,
         getAttribute: Element.prototype.getAttribute,
+        removeAttribute: Element.prototype.removeAttribute,
         insertAdjacentHTML: Element.prototype.insertAdjacentHTML ?? null,
         formSubmit: HTMLFormElement.prototype.submit,
 
@@ -765,7 +837,7 @@
     let _canary;
     try {
         const _cb = new _N.Uint8Array(16); // 128 bits of entropy
-        _N.getRandomValues.call(crypto, _cb);
+        _reflectApply(_N.getRandomValues, crypto, [_cb]);
         let _cs = '';
         for (let _i = 0; _i < 16; _i++) {
             const _b = _cb[_i];
@@ -861,6 +933,14 @@
     // HTML threat scanner early-exit and attribute extraction logic.
     _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['String.prototype.toLowerCase', () => String.prototype.toLowerCase];
     _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['String.prototype.indexOf', () => String.prototype.indexOf];
+    // V11/V12: appendChild and removeChild — used by alert overlay, veil, and
+    // MO scanner to inject/remove DOM elements via captured _nodeAppend/_nodeRemove.
+    _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Node.prototype.appendChild', () => Node.prototype.appendChild];
+    _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Node.prototype.removeChild', () => Node.prototype.removeChild];
+    // V13: querySelectorAll — used by MO observer to scan descendant elements.
+    _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Element.prototype.querySelectorAll', () => Element.prototype.querySelectorAll];
+    // removeAttribute — used by MO observer and scanner to strip malicious attributes.
+    _NATIVE_CHECKS[_NATIVE_CHECKS.length] = ['Element.prototype.removeAttribute', () => Element.prototype.removeAttribute];
 
     /* ──────────────────────────────────────────────────────────
        3.  Threat response
@@ -883,15 +963,15 @@
         const nuke = (store) => {
             if (!store) return;
             try {
-                const len = _N.storageLength.call(store);
+                const len = _reflectApply(_N.storageLength, store, []);
                 const keys = [];
                 let _ki = 0;
                 for (let i = 0; i < len; i++) {
-                    const k = _N.storageKey.call(store, i);
+                    const k = _reflectApply(_N.storageKey, store, [i]);
                     // BUG-C: k?.startsWith('snv-') uses live String.prototype.startsWith;
-                    // _reflectApply + captured _strSlice is immune to post-boot patching.
+                    // _pureSlice uses only bracket indexing + concatenation — zero prototype calls.
                     // BUG-F: index assignment (keys[_ki++]) replaces keys.push(k).
-                    if (k && _reflectApply(_strSlice, k, [0, 4]) === 'snv-') { keys[_ki++] = k; }
+                    if (k && _pureSlice(k, 0, 4) === 'snv-') { keys[_ki++] = k; }
                 }
                 if (!keys.length) return;
 
@@ -903,12 +983,12 @@
                 // BUG-B: keys.forEach() uses live Array.prototype.forEach;
                 // an indexed for-loop is completely immune to prototype replacement.
                 for (_ki = 0; _ki < keys.length; _ki++) {
-                    try { _N.storageSetItem.call(store, keys[_ki], zeros); } catch { }
+                    try { _reflectApply(_N.storageSetItem, store, [keys[_ki], zeros]); } catch { }
                 }
 
                 // Pass 2: delete the entries
                 for (_ki = 0; _ki < keys.length; _ki++) {
-                    try { _N.storageRemoveItem.call(store, keys[_ki]); } catch { }
+                    try { _reflectApply(_N.storageRemoveItem, store, [keys[_ki]]); } catch { }
                 }
             } catch { /* storage access denied — skip */ }
         };
@@ -956,7 +1036,7 @@
     let _ALERT_HOST_CLS = 'xsafenova00'; // fallback (never a real CSS class used by ABP rules)
     try {
         const _alcBuf = new _N.Uint8Array(5);
-        _N.getRandomValues.call(crypto, _alcBuf);
+        _reflectApply(_N.getRandomValues, crypto, [_alcBuf]);
         let _alc = 'x';
         for (let _ali = 0; _ali < 5; _ali++) {
             _alc += _HEX_CHARS[_alcBuf[_ali] >> 4] + _HEX_CHARS[_alcBuf[_ali] & 15];
@@ -1001,7 +1081,7 @@
             const _rc = _ALERT_HOST_CLS; // shorthand for random class
 
             // Use the captured native createElement so hooks cannot interfere
-            const overlay = _N.createElement.call(document, 'div');
+            const overlay = _reflectApply(_N.createElement, document, ['div']);
             // F1: Random session-specific class — cannot be persistently blocked by
             //     cosmetic filters (class name is unguessable and changes every load).
             //     CSS class "snv-overlay" provides the visual styles; _rc defeats ABP.
@@ -1072,7 +1152,9 @@
 </div>`;
 
             try {
-                (document.body || document.documentElement).appendChild(overlay);
+                // V11: Use captured _nodeAppend — live Node.prototype.appendChild
+                // could be replaced post-boot to silently prevent alert overlay.
+                _reflectApply(_nodeAppend, document.body || document.documentElement, [overlay]);
             } catch { }
 
             // querySelector searches contentRoot (shadow), not document scope
@@ -1097,7 +1179,7 @@
                     if (overlay !== _alertOverlay) { _healer.disconnect(); return; }
                     if (Date.now() > _healDeadline) { _healer.disconnect(); _alertHealer = null; return; }
                     if (!overlay.isConnected) {
-                        try { (document.body || document.documentElement).appendChild(overlay); } catch { }
+                        try { _reflectApply(_nodeAppend, document.body || document.documentElement, [overlay]); } catch { }
                     }
                     // Reinforce display:flex!important in case a stylesheet injection hid it
                     try { overlay.style.setProperty('display', 'flex', 'important'); } catch { }
@@ -1156,12 +1238,12 @@
         const _fire = function snvDebugTrap() {
             debugger; // intentional — Self-XSS deterrent // eslint-disable-line no-debugger
             if (Date.now() > _trapEnd) {
-                _N._clearInterval.call(window, _tidRef.id);
+                _reflectApply(_N._clearInterval, window, [_tidRef.id]);
                 delete _trapIds[_tidRef.id]; // SET-2: delete operator
                 _debugTrapActive = false;
             }
         };
-        _tidRef.id = _N._setInterval.call(window, _fire, 50);
+        _tidRef.id = _reflectApply(_N._setInterval, window, [_fire, 50]);
         _trapIds[_tidRef.id] = 1; // SET-2: direct assignment
     }
 
@@ -1185,8 +1267,8 @@
         // window.dispatchEvent = () => {} replacement cannot silently drop
         // the snv:lock event that triggers lockContainer() in main.js.
         try {
-            _N.dispatchEvent.call(window,
-                new _N.CustomEvent('snv:lock', { detail: { reason } }));
+            _reflectApply(_N.dispatchEvent, window, [
+                new _N.CustomEvent('snv:lock', { detail: { reason } })]);
         } catch { }
 
         const now = Date.now();
@@ -1203,10 +1285,9 @@
         try {
             const s = '' + urlStr;
             // data: URLs are inline resources (canvas thumbnails, etc.) — always safe
-            // BUG-G: Use captured _strSlice (not live String.prototype.startsWith)
-            // so a post-boot startsWith replacement cannot make all 'd'-prefixed
-            // URLs bypass the origin check.
-            if (s.charCodeAt(0) === 100 && _reflectApply(_strSlice, s, [0, 5]) === 'data:') return false;
+            // BUG-G: s[0] is a pure bracket-indexing operator; _pureSlice uses only
+            // bracket indexing + concatenation — no hookable prototype method at all.
+            if (s[0] === 'd' && _pureSlice(s, 0, 5) === 'data:') return false;
             const parsed = new _N.URL(s, window.location.href);
             const proto = parsed.protocol;
             // Browser-extension resources are injected by user-installed extensions
@@ -1231,12 +1312,17 @@
 
     // ── Inner implementations (closure-private) ────────────────
     const _fetchImpl = function (input) {
-        const url = (input instanceof Request) ? input.url : ('' + (input ?? ''));
+        // V10: Do not use `instanceof Request` — attackable via Symbol.hasInstance.
+        // `typeof` is an operator (unhookable); .url is read either way.
+        const url = (typeof input === 'object' && input !== null && typeof input.url === 'string')
+            ? input.url : ('' + (input ?? ''));
         if (_isExternal(url)) {
             _triggerAlert('Outbound fetch blocked → ' + url);
             return Promise.reject(new Error('[SafeNova Proactive] External fetch blocked'));
         }
-        return _N.fetch.apply(this === window ? window : globalThis, arguments);
+        // V9: Use captured _reflectApply instead of live Function.prototype.apply,
+        // which could be replaced post-boot to intercept pass-through arguments.
+        return _reflectApply(_N.fetch, this === window ? window : globalThis, arguments);
     };
 
     const _xhrOpenImpl = function (method, url) {
@@ -1244,7 +1330,7 @@
             _triggerAlert('Outbound XHR blocked → ' + url);
             throw new Error('[SafeNova Proactive] External XHR blocked');
         }
-        return _N.xhrOpen.apply(this, arguments);
+        return _reflectApply(_N.xhrOpen, this, arguments);
     };
 
     const _sendBeaconImpl = function (url) {
@@ -1252,7 +1338,7 @@
             _triggerAlert('sendBeacon to external URL blocked → ' + url);
             return false;
         }
-        return _N.sendBeacon.apply(navigator, arguments);
+        return _reflectApply(_N.sendBeacon, navigator, arguments);
     };
 
     // ── D2: DOM exfiltration defense constants ─────────────────
@@ -1271,9 +1357,9 @@
 
     // ── setAttribute — blocks on* handlers and external resource URLs ──
     const _setAttributeImpl = function (name, value) {
-        // BUG-K: Use captured _strToLower (not live .toLowerCase()) so an attacker
-        // replacing the prototype method cannot make uppercase ONCLICK/SRC pass undetected.
-        const lName = _reflectApply(_strToLower, '' + (name ?? ''), []);
+        // BUG-K: _pureToLower uses a frozen A-Z→a-z lookup + bracket indexing —
+        // no prototype method call; immune to any String.prototype.toLowerCase hook.
+        const lName = _pureToLower('' + (name ?? ''));
         if (lName.length > 2 && lName[0] === 'o' && lName[1] === 'n') {
             _triggerAlert('Inline event handler via setAttribute blocked \u2192 ' + lName);
             return;
@@ -1282,16 +1368,16 @@
         // not auto-loading. Blocking them causes false positives for normal app links.
         // ping= on anchors is still caught below (auto-fires on click).
         if (lName === 'href') {
-            const tag = _reflectApply(_strToLower, '' + (this.tagName || ''), []);
+            const tag = _pureToLower('' + (this.tagName || ''));
             if (tag === 'a' || tag === 'area') {
-                return _N.setAttribute.apply(this, arguments);
+                return _reflectApply(_N.setAttribute, this, arguments);
             }
         }
         if (lName in _RESOURCE_ATTRS && _isExternal('' + (value ?? ''))) {
             _triggerAlert('External resource via setAttribute blocked \u2192 ' + lName + '=' + value);
             return;
         }
-        return _N.setAttribute.apply(this, arguments);
+        return _reflectApply(_N.setAttribute, this, arguments);
     };
 
     // ── HTML content threat scanner ────────────────────────────
@@ -1299,34 +1385,32 @@
     function _htmlHasThreat(html) {
         const h = '' + (html ?? '');
         if (_reflectApply(_reTest, _ON_ATTR_RE, [h])) return 'inline event handler';
-        // BUG-J: Use captured _strIndexOf — replacing live indexOf with () => -1
-        // causes this early-exit to always return false, bypassing the entire scanner.
-        if (_reflectApply(_strIndexOf, h, ['://']) === -1) return false;
+        // BUG-J: _pureIndexOf uses a nested indexed loop + bracket comparison —
+        // no prototype method call; immune to any String.prototype.indexOf hook.
+        if (_pureIndexOf(h, '://') === -1) return false;
         const _RATTR_KEYS = ['src=', 'href=', 'data=', 'ping=', 'action=', 'formaction=', 'poster=', 'srcset='];
-        // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
-        // makes attribute names uppercase; hLow.indexOf(lowercase-attr) would miss them.
-        const hLow = _reflectApply(_strToLower, h, []);
+        // BUG-K: _pureToLower — pure operator-level ASCII lowercasing.
+        const hLow = _pureToLower(h);
         for (let _ri = 0; _ri < _RATTR_KEYS.length; _ri++) {
             const attr = _RATTR_KEYS[_ri];
             let apos = 0;
             while (true) {
-                apos = _reflectApply(_strIndexOf, hLow, [attr, apos]);
+                apos = _pureIndexOf(hLow, attr, apos);
                 if (apos === -1) break;
                 let vs = apos + attr.length;
                 while (vs < h.length && (h[vs] === ' ' || h[vs] === '\t')) vs++;
                 let ve;
                 if (h[vs] === '"' || h[vs] === "'") {
                     const q = h[vs]; vs++;
-                    ve = _reflectApply(_strIndexOf, h, [q, vs]);
+                    ve = _pureIndexOf(h, q, vs);
                     if (ve === -1) ve = h.length;
                 } else {
                     ve = vs;
                     while (ve < h.length && h[ve] !== ' ' && h[ve] !== '>' && h[ve] !== '\t') ve++;
                 }
-                // BUG-L: Use captured _strSlice instead of live String.prototype.substring —
-                // replacing substring with () => '' makes every extracted URL appear empty,
-                // so _isExternal('') returns false and external URLs pass unchecked.
-                const url = _reflectApply(_strSlice, h, [vs, ve]);
+                // BUG-L: _pureSlice extracts substring via bracket + concatenation —
+                // immune to any String.prototype.slice / .substring hook.
+                const url = _pureSlice(h, vs, ve);
                 if (_isExternal(url)) return attr + url;
                 apos = ve;
             }
@@ -1337,7 +1421,7 @@
     const _insertAdjacentHTMLImpl = function (position, html) {
         const threat = _htmlHasThreat(html);
         if (threat) { _triggerAlert('Threat in insertAdjacentHTML blocked \u2192 ' + threat); return; }
-        return _N.insertAdjacentHTML.apply(this, arguments);
+        return _reflectApply(_N.insertAdjacentHTML, this, arguments);
     };
 
     const _docWriteImpl = function () {
@@ -1345,14 +1429,14 @@
         for (let _i = 0; _i < arguments.length; _i++) combined += '' + (arguments[_i] ?? '');
         const threat = _htmlHasThreat(combined);
         if (threat) { _triggerAlert('Threat in document.write blocked \u2192 ' + threat); return; }
-        return _N.docWrite.apply(this, arguments);
+        return _reflectApply(_N.docWrite, this, arguments);
     };
     const _docWritelnImpl = function () {
         let combined = '';
         for (let _i = 0; _i < arguments.length; _i++) combined += '' + (arguments[_i] ?? '');
         const threat = _htmlHasThreat(combined);
         if (threat) { _triggerAlert('Threat in document.writeln blocked \u2192 ' + threat); return; }
-        return _N.docWriteln.apply(this, arguments);
+        return _reflectApply(_N.docWriteln, this, arguments);
     };
 
     // ── D3: post-init iframe creation block ───────────────────
@@ -1367,30 +1451,29 @@
     // or other elements for their own purposes are unaffected.
     const _createElementImpl = function (tagName) {
         if (_iframeRestoreDone) {
-            // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
-            // makes 'IFRAME' !== 'iframe', bypassing the D3 post-init iframe block entirely.
-            const _tag = _reflectApply(_strToLower, '' + (tagName ?? ''), []);
+            // BUG-K: _pureToLower — pure operator-level; no prototype dependency.
+            const _tag = _pureToLower('' + (tagName ?? ''));
             if (_tag === 'iframe') {
                 _triggerAlert('iframe creation blocked post-init \u2192 native-reset attack vector');
                 // Return a harmless <div> so the call site does not throw,
                 // minimising fingerprinting surface for the attacker.
-                return _N.createElement.call(this, 'div');
+                return _reflectApply(_N.createElement, this, ['div']);
             }
         }
-        return _N.createElement.apply(this, arguments);
+        return _reflectApply(_N.createElement, this, arguments);
     };
 
     const _locAssignImpl = function (url) {
         if (_isExternal('' + (url ?? ''))) {
             _triggerAlert('External navigation (assign) blocked \u2192 ' + url); return;
         }
-        return _N.locAssign.apply(this, arguments);
+        return _reflectApply(_N.locAssign, this, arguments);
     };
     const _locReplaceImpl = function (url) {
         if (_isExternal('' + (url ?? ''))) {
             _triggerAlert('External navigation (replace) blocked \u2192 ' + url); return;
         }
-        return _N.locReplace.apply(this, arguments);
+        return _reflectApply(_N.locReplace, this, arguments);
     };
 
     const _locHrefSetImpl = _N.locHrefDesc?.set ? (function () {
@@ -1425,7 +1508,7 @@
         if (_isExternal(action)) {
             _triggerAlert('Form submit to external URL blocked \u2192 ' + action); return;
         }
-        return _N.formSubmit.apply(this, arguments);
+        return _reflectApply(_N.formSubmit, this, arguments);
     };
 
     // Shared console output for silently-blocked operations (no modal alert, no key-wipe).
@@ -1474,10 +1557,9 @@
     // MutationObserver element threat scanner — checks a single element node.
     function _scanElementForThreats(el) {
         if (!el || el.nodeType !== 1) return;
-        // BUG-K: Use captured _strToLower + lowercase literals instead of live
-        // toUpperCase — replacing toUpperCase with identity would make 'script' tag
-        // comparisons miss injected <SCRIPT> elements passed through MutationObserver.
-        const _elTag = _reflectApply(_strToLower, '' + (el.tagName || ''), []);
+        // BUG-K: _pureToLower — pure operator-level ASCII lowercasing; no prototype
+        // dependency. Replacing String.prototype.toLowerCase cannot affect this.
+        const _elTag = _pureToLower('' + (el.tagName || ''));
         // <script> elements: only intercept external-src injections.
         // Same-origin and relative scripts (app's own modules) are allowed through.
         // Inline scripts have no src and are handled upstream by innerHTML/document.write hooks.
@@ -1486,7 +1568,9 @@
             let _scriptSrc = '';
             try { _scriptSrc = '' + (_reflectApply(_N.getAttribute, el, ['src']) || ''); } catch { }
             if (_scriptSrc && _isExternal(_scriptSrc)) {
-                try { if (el.parentNode) el.parentNode.removeChild(el); } catch { }
+                // V12: Use captured _nodeRemove — live Node.prototype.removeChild
+                // could be replaced to prevent removal of injected script elements.
+                try { if (el.parentNode) _reflectApply(_nodeRemove, el.parentNode, [el]); } catch { }
                 _logBlockedToConsole('Injected external <script> removed from DOM \u2192 src=' + _scriptSrc);
             }
             return; // never fall through to the general attribute scan for script elements
@@ -1499,9 +1583,9 @@
         const _isNavEl = (_elTag === 'a' || _elTag === 'area');
         for (let _ai = 0; _ai < attrs.length; _ai++) {
             const _a = attrs[_ai];
-            const aName = _reflectApply(_strToLower, '' + _a.name, []);
+            const aName = _pureToLower('' + _a.name);
             if (aName.length > 2 && aName[0] === 'o' && aName[1] === 'n') {
-                try { el.removeAttribute(aName); } catch { }
+                try { _reflectApply(_N.removeAttribute, el, [aName]); } catch { }
                 _triggerAlert('Inline event handler on DOM element \u2192 ' + aName);
                 return;
             }
@@ -1509,7 +1593,7 @@
             if (aName in _RESOURCE_ATTRS) {
                 const val = '' + (_a.value || '');
                 if (_isExternal(val)) {
-                    try { el.removeAttribute(aName); } catch { }
+                    try { _reflectApply(_N.removeAttribute, el, [aName]); } catch { }
                     _triggerAlert('External resource on DOM element \u2192 ' + aName + '=' + val);
                     return;
                 }
@@ -1565,7 +1649,7 @@
         // document_start would prevent this 'load' listener from being installed,
         // leaving _appCryptoRefs/_appMethodRefs permanently null and permanently
         // disabling G1 checks for Crypto and App.lockContainer.
-        _N.addEventListener.call(window, 'load', function () {
+        _reflectApply(_N.addEventListener, window, ['load', function () {
             try { _appRef = _readApp(); } catch { }
             // G1: Capture critical Crypto method references for tamper detection.
             // 'Crypto' bare identifier resolves to the app's script-scope const
@@ -1612,7 +1696,7 @@
                 const _wm = _readWinManager();
                 if (_wm && typeof _wm.closeAll === 'function') _wmCloseAllRef = _wm.closeAll;
             } catch { }
-        }, { once: true });
+        }, { once: true }]);
     } catch { }
 
     // Tracks whether _wipeAppState has already installed the DOM lockdown.
@@ -1647,7 +1731,7 @@
         // Helper: call a captured Document prototype method with document as context.
         const _docCall = (fn, arg) => {
             if (!fn) return null;
-            try { return fn.call(document, arg); } catch { return null; }
+            try { return _reflectApply(fn, document, [arg]); } catch { return null; }
         };
 
         // 2a. Zero editor textarea — wipes decrypted file plaintext from the DOM.
@@ -1657,7 +1741,7 @@
         try {
             const ta = _docCall(_N.docGetElementById, 'editor-textarea');
             if (ta) {
-                if (_N.taValueSetter) _N.taValueSetter.call(ta, '');
+                if (_N.taValueSetter) _reflectApply(_N.taValueSetter, ta, ['']);
                 else ta.value = '';
             }
         } catch { }
@@ -1666,7 +1750,7 @@
         try {
             const pw = _docCall(_N.docGetElementById, 'unlock-pw');
             if (pw) {
-                if (_N.inputValueSetter) _N.inputValueSetter.call(pw, '');
+                if (_N.inputValueSetter) _reflectApply(_N.inputValueSetter, pw, ['']);
                 else pw.value = '';
             }
         } catch { }
@@ -1705,8 +1789,8 @@
         //     is freed from memory and the browser can no longer serve their data.
         try {
             if (_N.docQuerySelectorAll) {
-                const _blobs = _N.docQuerySelectorAll.call(
-                    document, 'img[src^="blob:"],video[src^="blob:"],a[href^="blob:"]');
+                const _blobs = _reflectApply(_N.docQuerySelectorAll,
+                    document, ['img[src^="blob:"],video[src^="blob:"],a[href^="blob:"]']);
                 for (let i = 0; i < _blobs.length; i++) {
                     try {
                         const src = _blobs[i].src || _blobs[i].href || '';
@@ -1762,7 +1846,7 @@
                 _red + ' 25%,' + _red + ' 50%,' +
                 _dark + ' 50%,' + _dark + ' 75%,' +
                 _red + ' 75%,' + _red + ' 100%)';
-            const veil = _N.createElement.call(document, 'div');
+            const veil = _reflectApply(_N.createElement, document, ['div']);
             veil.className = _ALERT_HOST_CLS + ' snv-veil';
             // ITER-2: indexed loop — immune to Array.prototype[Symbol.iterator] poisoning
             const _veilStyles = [
@@ -1776,16 +1860,17 @@
             for (let _vsi = 0; _vsi < _veilStyles.length; _vsi++) {
                 try { veil.style.setProperty(_veilStyles[_vsi][0], _veilStyles[_vsi][1], 'important'); } catch { }
             }
-            (document.body || document.documentElement).appendChild(veil);
+            // V11: Use captured _nodeAppend — live .appendChild could be hooked.
+            _reflectApply(_nodeAppend, document.body || document.documentElement, [veil]);
             // Shifting background-position by exactly one tile (T, T) per iteration
             // is mathematically guaranteed to produce a seamless loop.
             if (_N.elementAnimate) {
                 try {
-                    _N.elementAnimate.call(veil,
+                    _reflectApply(_N.elementAnimate, veil, [
                         [{ backgroundPosition: '0 0' },
                         { backgroundPosition: _Tpx + ' ' + _Tpx }],
                         { duration: 700, iterations: Infinity, easing: 'linear' }
-                    );
+                    ]);
                 } catch { }
             }
         } catch { }
@@ -1816,10 +1901,8 @@
     function _mkCtorImpl(nativeCtor, label, blockData) {
         return function () {
             const urlStr = '' + (arguments[0] ?? '');
-            // BUG-J: Use captured _strIndexOf — replacing live indexOf with () => -1
-            // would make data: and blob: Worker checks always fail, letting hostile
-            // Workers bypass both guards while still passing _isExternal (same-origin).
-            if (blockData && _reflectApply(_strIndexOf, urlStr, ['data:']) === 0) {
+            // BUG-J: _pureIndexOf — nested indexed loop, zero prototype calls.
+            if (blockData && _pureIndexOf(urlStr, 'data:') === 0) {
                 _triggerAlert(label + ' with data: URL blocked');
                 throw new Error('[SafeNova Proactive] ' + label + ' data: URL blocked');
             }
@@ -1828,7 +1911,7 @@
             // in a separate global with a clean, unhooked fetch — any code inside
             // the blob can exfiltrate data without triggering page-level hooks.
             // SafeNova never creates Workers; any blob: Worker is suspicious.
-            if (blockData && _reflectApply(_strIndexOf, urlStr, ['blob:']) === 0) {
+            if (blockData && _pureIndexOf(urlStr, 'blob:') === 0) {
                 _triggerAlert(label + ' with blob: URL blocked');
                 throw new Error('[SafeNova Proactive] ' + label + ' blob: URL blocked');
             }
@@ -1958,8 +2041,8 @@
         if (_DISABLE_PROACTIVE_ANTITAMPER) {
             // Only dispatch heartbeat — skip all protection checks
             try {
-                _N.dispatchEvent.call(window,
-                    new _N.CustomEvent('snv:alive', { detail: { n: ++_heartbeatN } }));
+                _reflectApply(_N.dispatchEvent, window, [
+                    new _N.CustomEvent('snv:alive', { detail: { n: ++_heartbeatN } })]);
             } catch { }
             return;
         }
@@ -2049,8 +2132,8 @@
         //     CRIT-4: Use captured dispatchEvent + CustomEvent so a live
         //     window.dispatchEvent replacement cannot suppress the heartbeat.
         try {
-            _N.dispatchEvent.call(window,
-                new _N.CustomEvent('snv:alive', { detail: { n: ++_heartbeatN } }));
+            _reflectApply(_N.dispatchEvent, window, [
+                new _N.CustomEvent('snv:alive', { detail: { n: ++_heartbeatN } })]);
         } catch { }
     }
 
@@ -2119,7 +2202,7 @@
     let _wdQHead = 0;          // soft-delete head — advances past already-removed entries
 
     // ── Mechanism 1: setInterval (50 ms) ───────────────────────
-    const _ivId = _N._setInterval.call(window, _tick, 50);
+    const _ivId = _reflectApply(_N._setInterval, window, [_tick, 50]);
     _watchdogIds[_ivId] = 1; _watchdogCount++;
     _wdQueue[_wdQueue.length] = _ivId;
 
@@ -2131,7 +2214,7 @@
     //    brief window between when a new ID is generated and added).
     (function _stLoop() {
         _tick();
-        const id = _N._setTimeout.call(window, _stLoop, 937);
+        const id = _reflectApply(_N._setTimeout, window, [_stLoop, 937]);
         _watchdogIds[id] = 1; _watchdogCount++;
         _wdQueue[_wdQueue.length] = id;
         if (_watchdogCount > 16) {
@@ -2156,9 +2239,9 @@
     let _lastRafTick = 0, _rafId = null;
     function _rafLoop(ts) {
         if (ts - _lastRafTick >= 980) { _lastRafTick = ts; _tick(); }
-        _rafId = _N._requestAnimationFrame.call(window, _rafLoop);
+        _rafId = _reflectApply(_N._requestAnimationFrame, window, [_rafLoop]);
     }
-    _rafId = _N._requestAnimationFrame.call(window, _rafLoop);
+    _rafId = _reflectApply(_N._requestAnimationFrame, window, [_rafLoop]);
 
     // ── Mechanism 4: MessageChannel self-ping (~800 ms) ────────
     //    CRIT-5 (anti-removal hardening): completely independent of
@@ -2181,7 +2264,7 @@
             // tuned independently; if setTimeout was killed (all IDs in
             // _watchdogIds are expired) the MessageChannel still fires once
             // more and the dead man's switch in main.js covers the rest.
-            _N._setTimeout.call(window, () => { _mc.port1.postMessage(null); }, 800);
+            _reflectApply(_N._setTimeout, window, [() => { _mc.port1.postMessage(null); }, 800]);
         };
         _mc.port1.postMessage(null); // prime the first message
     } catch { /* MessageChannel unavailable — three mechanisms still active */ }
@@ -2192,12 +2275,12 @@
     //    foreign timer IDs.
     const _clearIntervalImpl = function (id) {
         if (id in _watchdogIds || id in _trapIds) return; // SET-1/2: `in` operator
-        return _N._clearInterval.call(window, id);
+        return _reflectApply(_N._clearInterval, window, [id]);
     };
     window.clearInterval = _mkProxy(_clearIntervalImpl, 'snvClearInterval');
     const _clearTimeoutImpl = function (id) {
         if (id in _watchdogIds || id in _trapIds) return; // SET-1/2: protect both watchdog and debugger-trap IDs
-        return _N._clearTimeout.call(window, id);
+        return _reflectApply(_N._clearTimeout, window, [id]);
     };
     window.clearTimeout = _mkProxy(_clearTimeoutImpl, 'snvClearTimeout');
 
@@ -2206,7 +2289,7 @@
     if (_N._cancelAnimationFrame) {
         const _cancelRAFImpl = function (id) {
             if (_rafId !== null && id === _rafId) return;
-            return _N._cancelAnimationFrame.call(window, id);
+            return _reflectApply(_N._cancelAnimationFrame, window, [id]);
         };
         window.cancelAnimationFrame = _mkProxy(_cancelRAFImpl, 'snvCancelAnimationFrame');
     }
@@ -2227,9 +2310,8 @@
                     const parsed = new _N.URL(urlStr);
                     const proto = parsed.protocol;
                     if (proto !== 'ws:' && proto !== 'wss:') return false;
-                    // BUG-K: Use captured _strToLower — replacing live toLowerCase with identity
-                    // would make 'WSS://EVIL.COM' host comparisons always fail (pass as safe).
-                    return _reflectApply(_strToLower, parsed.host, []) === _reflectApply(_strToLower, window.location.host, []);
+                    // BUG-K: _pureToLower — pure operator-level; no prototype dependency.
+                    return _pureToLower(parsed.host) === _pureToLower(window.location.host);
                 } catch { return false; }
             }());
             if (!isSameOrigin) {
@@ -2404,33 +2486,36 @@
                             const _node = _added[_ni];
                             if (_node.nodeType !== 1) continue;
                             _scanElementForThreats(_node);
-                            const _desc = _node.querySelectorAll
-                                ? _node.querySelectorAll('*') : [];
+                            // V13: Use captured Element.prototype.querySelectorAll —
+                            // live method could be replaced to return empty NodeList,
+                            // letting child elements of injected nodes bypass scanning.
+                            const _desc = _N.elQuerySelectorAll
+                                ? _reflectApply(_N.elQuerySelectorAll, _node, ['*']) : [];
                             for (let _di = 0; _di < _desc.length; _di++) {
                                 _scanElementForThreats(_desc[_di]);
                             }
                         }
                     }
                     if (_mut.type === 'attributes') {
-                        // BUG-K: Use captured _strToLower for attribute name normalization.
-                        const _aName = _reflectApply(_strToLower, '' + (_mut.attributeName || ''), []);
+                        // BUG-K: _pureToLower — pure operator-level; no prototype dependency.
+                        const _aName = _pureToLower('' + (_mut.attributeName || ''));
                         const _tgt = _mut.target;
                         if (_tgt.nodeType !== 1) continue;
                         if (_aName.length > 2 && _aName[0] === 'o' && _aName[1] === 'n') {
-                            try { _tgt.removeAttribute(_aName); } catch { }
+                            try { _reflectApply(_N.removeAttribute, _tgt, [_aName]); } catch { }
                             _triggerAlert('Inline event handler attribute changed \u2192 ' + _aName);
                             continue;
                         }
                         // <a> and <area> href changes are navigation-only — not auto-loading resources
                         if (_aName === 'href') {
-                            const _tgtTag = _reflectApply(_strToLower, '' + (_tgt.tagName || ''), []);
+                            const _tgtTag = _pureToLower('' + (_tgt.tagName || ''));
                             if (_tgtTag === 'a' || _tgtTag === 'area') continue;
                         }
                         if (_aName in _RESOURCE_ATTRS) {
                             let _val;
                             try { _val = _reflectApply(_N.getAttribute, _tgt, [_aName]); } catch { continue; }
                             if (_isExternal('' + (_val || ''))) {
-                                try { _tgt.removeAttribute(_aName); } catch { }
+                                try { _reflectApply(_N.removeAttribute, _tgt, [_aName]); } catch { }
                                 _triggerAlert('External resource attribute changed \u2192 ' + _aName + '=' + _val);
                             }
                         }
@@ -2448,8 +2533,8 @@
     //    tick so an attacker cannot exploit the ~1 s gap.
     //    CRIT-3: Use captured _N.addEventListener so a live replacement
     //    cannot prevent this fast-check from being installed.
-    _N.addEventListener.call(document, 'visibilitychange', () => {
+    _reflectApply(_N.addEventListener, document, ['visibilitychange', () => {
         if (document.visibilityState === 'visible') _tick();
-    });
+    }]);
 
 })();
