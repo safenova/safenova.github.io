@@ -60,10 +60,15 @@
       cannot exploit the ~1 s window.
 
    9. App function integrity (G1) — critical Crypto module methods
-      (encrypt, decrypt, decryptBin, deriveKey, deriveKeyAndRaw) AND
-      App.lockContainer are captured at window load and compared by
-      reference on every tick.  Replacing any of them via the DevTools
-      console triggers an immediate alert and key-wipe cycle.
+      (encrypt, decrypt, encryptBin, decryptBin, deriveKey,
+      deriveKeyAndRaw, importRawKey, checkVerification,
+      makeVerification), App.lockContainer, VFS.init, and
+      WinManager.closeAll are wrapped through _mkProxy at window load
+      so toString() reveals only the thin forwarder body (same double-
+      hook pattern as network/DOM hooks).  Raw references are kept
+      closure-private for _wipeAppState.  Proxied references are
+      compared by identity on every tick — replacing any of them via
+      the DevTools console triggers an immediate alert and key-wipe.
 
   10. Debugger trap (G3) — on threat detection a 'debugger' statement
       fires every 50 ms for up to 5 minutes. If DevTools are open this
@@ -1609,16 +1614,17 @@
        itself be patched or replaced by an attacker.
        ────────────────────────────────────────────────────────── */
     let _appRef = null;
-    // _appCryptoRefs: frozen snapshot of critical Crypto method references.
+    // _appCryptoRefs: frozen snapshot of _mkProxy-wrapped Crypto method references.
     // Populated at 'load' (after crypto.js has executed). Used in tick 6d.
     let _appCryptoRefs = null;
-    // _appMethodRefs: frozen snapshot of critical App security method references.
+    // _appMethodRefs: frozen snapshot of _mkProxy-wrapped App method references.
     // Populated at 'load'. Used in tick 6e to detect App.lockContainer replacement.
     let _appMethodRefs = null;
-    // _vfsInitRef / _wmCloseAllRef: captured function references for VFS.init and
-    // WinManager.closeAll.  Populated at 'load'.  Used in _wipeAppState so that a
-    // console-level `VFS.init = () => {}` replacement before a threat fires cannot
-    // prevent the in-memory VFS clear or window-panel teardown.
+    // _vfsInitRef / _wmCloseAllRef: raw (unwrapped) function references for VFS.init
+    // and WinManager.closeAll.  Populated at 'load'.  Used in _wipeAppState so that
+    // a console-level replacement before a threat fires cannot prevent the in-memory
+    // VFS clear or window-panel teardown.  The objects themselves receive _mkProxy
+    // wrappers at load time; these raw refs bypass the proxy for direct invocation.
     let _vfsInitRef = null;
     let _wmCloseAllRef = null;
     // _debugTrapActive: prevents stacking multiple 50 ms debugger intervals.
@@ -1651,50 +1657,92 @@
         // disabling G1 checks for Crypto and App.lockContainer.
         _reflectApply(_N.addEventListener, window, ['load', function () {
             try { _appRef = _readApp(); } catch { }
-            // G1: Capture critical Crypto method references for tamper detection.
+            // G1: Wrap critical Crypto methods through _mkProxy and capture
+            // the proxied references for per-tick tamper detection (6d).
+            // Each method’s toString() now reveals only the thin _mkProxy
+            // forwarder body — the real implementation is closure-private.
             // 'Crypto' bare identifier resolves to the app's script-scope const
             // (declared in crypto.js as `const Crypto = ...`), NOT to window.Crypto
-            // (browser WebCrypto API). JS checks the declarative environment record
-            // before the object environment record in the scope chain, so the app's
-            // Crypto const shadows window.Crypto. We verify identity with .encrypt
+            // (browser WebCrypto API). We verify identity with .encrypt
             // (app module has it; browser WebCrypto does not — it has .subtle).
             try {
                 if (typeof Crypto !== 'undefined' && typeof Crypto.encrypt === 'function') {
+                    // Wrap each Crypto method through _mkProxy — toString() on
+                    // the live property reveals only the thin forwarder body,
+                    // hiding the real implementation in a closure-private _p.
+                    const _pEncrypt = _mkProxy(Crypto.encrypt, 'snvCryptoEncrypt');
+                    const _pDecrypt = _mkProxy(Crypto.decrypt, 'snvCryptoDecrypt');
+                    const _pEncryptBin = _mkProxy(Crypto.encryptBin, 'snvCryptoEncryptBin');
+                    const _pDecryptBin = _mkProxy(Crypto.decryptBin, 'snvCryptoDecryptBin');
+                    const _pDeriveKey = _mkProxy(Crypto.deriveKey, 'snvCryptoDeriveKey');
+                    const _pDeriveKeyAndRaw = _mkProxy(Crypto.deriveKeyAndRaw, 'snvCryptoDeriveKeyAndRaw');
+                    // importRawKey: called by home.js + fileops.js to turn raw AES
+                    // bytes into a CryptoKey.  Replacing it could capture key material.
+                    const _pImportRawKey = _mkProxy(Crypto.importRawKey, 'snvCryptoImportRawKey');
+                    // checkVerification: called from home.js, fileops.js, desktop.js
+                    // to verify the password against the stored blob.  Replacing with
+                    // () => true bypasses authentication in all unlock paths.
+                    const _pCheckVerification = _mkProxy(Crypto.checkVerification, 'snvCryptoCheckVerification');
+                    // makeVerification: called when creating / changing a container
+                    // password to generate the stored verification blob.
+                    const _pMakeVerification = _mkProxy(Crypto.makeVerification, 'snvCryptoMakeVerification');
+                    // Install proxied versions on the Crypto module object
+                    Crypto.encrypt = _pEncrypt;
+                    Crypto.decrypt = _pDecrypt;
+                    Crypto.encryptBin = _pEncryptBin;
+                    Crypto.decryptBin = _pDecryptBin;
+                    Crypto.deriveKey = _pDeriveKey;
+                    Crypto.deriveKeyAndRaw = _pDeriveKeyAndRaw;
+                    Crypto.importRawKey = _pImportRawKey;
+                    Crypto.checkVerification = _pCheckVerification;
+                    Crypto.makeVerification = _pMakeVerification;
+                    // Store proxied refs for per-tick tamper detection (6d)
                     _appCryptoRefs = Object.freeze({
-                        encrypt: Crypto.encrypt,
-                        decrypt: Crypto.decrypt,
-                        encryptBin: Crypto.encryptBin,
-                        decryptBin: Crypto.decryptBin,
-                        deriveKey: Crypto.deriveKey,
-                        deriveKeyAndRaw: Crypto.deriveKeyAndRaw,
+                        encrypt: _pEncrypt,
+                        decrypt: _pDecrypt,
+                        encryptBin: _pEncryptBin,
+                        decryptBin: _pDecryptBin,
+                        deriveKey: _pDeriveKey,
+                        deriveKeyAndRaw: _pDeriveKeyAndRaw,
+                        importRawKey: _pImportRawKey,
+                        checkVerification: _pCheckVerification,
+                        makeVerification: _pMakeVerification,
                     });
                 }
             } catch { }
-            // G1 (App security methods): capture App.lockContainer by value so
-            // that a console-level replacement (App.lockContainer = () => {})
-            // is detected on the next tick.  We use _readApp() (bare identifier)
-            // instead of window.App because state.js declares `const App = {...}`,
-            // which lands in the lexical env record, NOT on the global object.
+            // G1 (App security methods): wrap App.lockContainer through _mkProxy
+            // and install the proxied version on the App object.  A console-level
+            // replacement (App.lockContainer = () => {}) is detected on the next
+            // tick.  _readApp() uses the bare identifier because state.js declares
+            // `const App = {...}` in the lexical env record, NOT on window.
             try {
                 const _a = _readApp();
                 if (_a && typeof _a.lockContainer === 'function') {
+                    const _pLockContainer = _mkProxy(_a.lockContainer, 'snvLockContainer');
+                    _a.lockContainer = _pLockContainer;
                     _appMethodRefs = Object.freeze({
-                        lockContainer: _a.lockContainer,
+                        lockContainer: _pLockContainer,
                     });
                 }
             } catch { }
-            // BUG-4: Capture VFS.init and WinManager.closeAll by reference so that
-            // an attacker who replaces these methods before a threat fires cannot
-            // prevent wipeAppState from clearing in-memory metadata.
-            // Uses bare identifiers (_readVFS / _readWinManager) because both are
-            // `const` module-scope declarations and are never on window.
+            // BUG-4: Capture raw VFS.init and WinManager.closeAll by reference
+            // for direct use in _wipeAppState (immune to post-capture replacement),
+            // then install _mkProxy wrappers on the objects so toString() hides
+            // the real implementations.  Bare identifiers (_readVFS / _readWinManager)
+            // because both are `const` module-scope declarations, never on window.
             try {
                 const _v = _readVFS();
-                if (_v && typeof _v.init === 'function') _vfsInitRef = _v.init;
+                if (_v && typeof _v.init === 'function') {
+                    _vfsInitRef = _v.init; // raw ref for _wipeAppState
+                    _v.init = _mkProxy(_v.init, 'snvVfsInit');
+                }
             } catch { }
             try {
                 const _wm = _readWinManager();
-                if (_wm && typeof _wm.closeAll === 'function') _wmCloseAllRef = _wm.closeAll;
+                if (_wm && typeof _wm.closeAll === 'function') {
+                    _wmCloseAllRef = _wm.closeAll; // raw ref for _wipeAppState
+                    _wm.closeAll = _mkProxy(_wm.closeAll, 'snvWmCloseAll');
+                }
             } catch { }
         }, { once: true }]);
     } catch { }
@@ -2103,7 +2151,10 @@
                 _liveC.encryptBin !== _appCryptoRefs.encryptBin ||
                 _liveC.decryptBin !== _appCryptoRefs.decryptBin ||
                 _liveC.deriveKey !== _appCryptoRefs.deriveKey ||
-                _liveC.deriveKeyAndRaw !== _appCryptoRefs.deriveKeyAndRaw
+                _liveC.deriveKeyAndRaw !== _appCryptoRefs.deriveKeyAndRaw ||
+                _liveC.importRawKey !== _appCryptoRefs.importRawKey ||
+                _liveC.checkVerification !== _appCryptoRefs.checkVerification ||
+                _liveC.makeVerification !== _appCryptoRefs.makeVerification
             ) {
                 _triggerAlert('App function tampered: Crypto');
                 return;
@@ -2175,7 +2226,18 @@
     // and app state directly, bypassing the event system entirely.
     try {
         Object.defineProperty(window, '__snvEmergencyLock', {
-            value: function snvEmergencyLock() { _nukeStorage(); _wipeAppState(); },
+            value: function snvEmergencyLock(reason) {
+                _nukeStorage();
+                _wipeAppState();
+                // BUG-FIX: Previously, callers (e.g. the dead man's switch in main.js)
+                // that used __snvEmergencyLock directly would create the veil via
+                // _wipeAppState but NEVER show the alert overlay — the user saw the
+                // animated stripes pattern with no explanation and no reload button.
+                // When a reason string is provided, show the full alert overlay.
+                // The snv:lock handler in main.js calls this WITHOUT a reason (to avoid
+                // a duplicate overlay, since _triggerAlert already calls _showAlert).
+                if (typeof reason === 'string' && reason) _showAlert(reason);
+            },
             writable: false,
             configurable: false,
             enumerable: false,

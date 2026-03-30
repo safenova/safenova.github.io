@@ -412,7 +412,9 @@ window.addEventListener('snv:lock', e => {
             // _dmsLocking prevents re-entrant fires while lockContainer is still
             // running asynchronously (interval period < async completion time).
             _dmsLocking = true;
-            try { window.__snvEmergencyLock?.(); } catch { }
+            // BUG-FIX: Pass the reason string so __snvEmergencyLock shows the alert
+            // overlay (previously the user saw the animated veil with no explanation).
+            try { window.__snvEmergencyLock?.('Security guard stopped responding \u2014 container locked for safety.'); } catch { }
             toast('Security guard stopped responding — container locked for safety.', 'warn');
             App.lockContainer().finally(() => { _dmsLocking = false; });
         }
