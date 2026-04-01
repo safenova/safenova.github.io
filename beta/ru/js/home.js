@@ -413,7 +413,7 @@ async function doChangePassword() {
 
 
         // New verification blob
-        showLoading('Finalizing…');
+        showLoading('Завершение…');
         const { iv: verIv, blob: verBlob } = await Crypto.makeVerification(newKey);
 
         // Update container metadata

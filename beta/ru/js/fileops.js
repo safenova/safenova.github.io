@@ -1367,7 +1367,7 @@ async function exportAsZip(nodeIds, zipName) {
             ? (VFS.node(nodeIds[0])?.name?.replace(/\.[^.]+$/, '') || 'export') + '.zip'
             : 'export.zip';
     }
-    showLoading('Preparing ZIP…');
+    showLoading('Подготовка ZIP…');
     try {
         const entries = [], _zipSeen = new Set(), _flat = [];
         function _collectFlat(nodeId, prefix, _depth = 0) {
