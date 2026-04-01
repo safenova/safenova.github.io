@@ -1432,7 +1432,7 @@ function _renderStats() {
             `<span class="stats-bar-row-meta"><span>${count}</span><span class="stats-bar-row-meta-size">${fmtSize(typeSizes[ext] || 0)}</span></span>`;
         chart.appendChild(row);
     });
-    if (!sorted.length) chart.innerHTML = '<span style="font-size:12px;color:var(--text-dim)">No files yet</span>';
+    if (!sorted.length) chart.innerHTML = '<span style="font-size:12px;color:var(--text-dim)">Файлов нет</span>';
 
     // ── Storage bar ──────────────────────────────────────────
     const storBar = document.getElementById('stats-storage-bar'),
@@ -1444,8 +1444,8 @@ function _renderStats() {
         `<span class="stats-storage-text">${pctUsed}%</span>`;
     if (storLabels) {
         storLabels.innerHTML =
-            `<span>${fmtSize(totalSize)} used</span>` +
-            `<span>${fmtSize(Math.max(0, CONTAINER_LIMIT - totalSize))} free of ${fmtSize(CONTAINER_LIMIT)}</span>`;
+            `<span>${fmtSize(totalSize)} использовано</span>` +
+            `<span>${fmtSize(Math.max(0, CONTAINER_LIMIT - totalSize))} свободно из ${fmtSize(CONTAINER_LIMIT)}</span>`;
     }
 
     // ── Top 5 largest files ──────────────────────────────────
@@ -1454,7 +1454,7 @@ function _renderStats() {
         topEl.innerHTML = '';
         const top5 = allFiles.sort((a, b) => b.size - a.size).slice(0, 5);
         if (!top5.length) {
-            topEl.innerHTML = '<span style="font-size:12px;color:var(--text-dim)">No files yet</span>';
+            topEl.innerHTML = '<span style="font-size:12px;color:var(--text-dim)">Файлов нет</span>';
         } else {
             top5.forEach((f, i) => {
                 const row = document.createElement('div'); row.className = 'stats-top-file';

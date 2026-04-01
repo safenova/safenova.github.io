@@ -1146,13 +1146,13 @@
   </div>
   <div class="${_rc} snv-reason">${safeReason}</div>
   <div class="${_rc} snv-desc">
-    A suspicious operation was <strong>blocked</strong> and all encrypted session keys have been <strong>cleared</strong>.
+    Подозрительная операция была <strong>заблокирована</strong>, а все зашифрованные ключи сессии были <strong>очищены</strong>.
   </div>
   <div class="${_rc} snv-hint">
-    This may indicate a malicious browser extension attempting to intercept or exfiltrate data. Audit your installed extensions and reload.
+    Это может указывать на вредоносное расширение браузера, пытающееся перехватить или похитить данные. Проверьте установленные расширения и перезагрузите страницу.
   </div>
   <button class="${_rc} snv-btn" id="snv-pa-ok">
-    I understand — Reload
+    Понятно — Перезагрузить
   </button>
 </div>`;
 
@@ -1213,14 +1213,14 @@
         try {
             const _ce = _N.consoleError || console.error.bind(console);
             _ce(
-                '%c\u26d4\ufe0f  SafeNova Proactive  \u2502  THREAT DETECTED',
+                '%c\u26d4\ufe0f  SafeNova Proactive  \u2502  УГРОЗА ОБНАРУЖЕНА',
                 'background:#6a0000;color:#ff5555;font-size:13px;font-weight:700;padding:3px 8px;border-radius:3px'
             );
             _ce('%c' + ('' + reason),
                 'color:#ff4444;font-weight:600;font-size:12px;padding-left:4px'
             );
             _ce(
-                '%cAll encrypted session keys have been cleared. The container is locked.',
+                '%cВсе зашифрованные ключи сессии очищены. Контейнер заблокирован.',
                 'color:#cc6666;padding-left:4px'
             );
         } catch { }
