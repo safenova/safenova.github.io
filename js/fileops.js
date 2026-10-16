@@ -15,14 +15,23 @@ function sanitizeFilename(name) {
 /* ============================================================
    UPLOAD FILES  (from OS drag-drop or file picker — flat list)
    ============================================================ */
-async function uploadFiles(files) {
+async function uploadFiles(files, targetFolderId = App.folder) {
     if (!App.key || !App.container) return;
     if (!files || !files.length) return;
+
+    const names = new Set(VFS.children(targetFolderId).map(n => n.name.toLowerCase()));
+    const fileArr = Array.from(files).filter(f => {
+        const name = sanitizeFilename(f.name).toLowerCase();
+        if (names.has(name)) { toast(`"${sanitizeFilename(f.name)}" already exists — skipped`, 'warn'); return false; }
+        names.add(name);
+        return true;
+    });
+    if (!fileArr.length) return;
 
     // Container size check
     const remaining = CONTAINER_LIMIT - VFS.totalSize();
     let totalNew = 0;
-    for (const f of files) totalNew += f.size;
+    for (const f of fileArr) totalNew += f.size;
     if (totalNew > remaining) {
         toast(`Not enough space in container. Need ${fmtSize(totalNew)}, have ${fmtSize(remaining)}`, 'error');
         return;
@@ -38,46 +47,55 @@ async function uploadFiles(files) {
         return;
     }
 
-    showLoading(`Encrypting ${files.length} file${files.length > 1 ? 's' : ''}...`);
+    showLoading(`Encrypting ${fileArr.length} file${fileArr.length > 1 ? 's' : ''}...`);
     let ok = 0, _okIds = [];
-    const fileArr = Array.from(files);
     const BATCH = _CRYPTO_CONCURRENCY;
-    for (let i = 0; i < fileArr.length; i += BATCH) {
-        const batch = fileArr.slice(i, i + BATCH);
-        // Read all file buffers in this batch concurrently before encrypting
-        const bufs = await Promise.all(batch.map(f => f.arrayBuffer()));
-        const results = await Promise.allSettled(batch.map(async (f, bi) => {
-            const name = sanitizeFilename(f.name),
-                mime = f.type || getMime(name),
-                { iv, blob } = await Crypto.encryptBin(App.key, bufs[bi]),
-                nodeId = uid();
-            VFS.add({
-                id: nodeId, type: 'file', name, mime, size: f.size,
-                parentId: App.folder, ctime: Date.now(), mtime: Date.now()
-            });
-            return { nodeId, rec: { id: nodeId, cid: App.container.id, iv: Array.from(iv), blob } };
-        }));
-        // Batch-save all encrypted records in a single IDB transaction
-        const recs = [];
-        for (let j = 0; j < results.length; j++) {
-            if (results[j].status === 'fulfilled') {
-                ok++;
-                _okIds.push(results[j].value.nodeId);
-                recs.push(results[j].value.rec);
-            } else {
-                console.error('upload error', batch[j].name, results[j].reason);
-                toast('Failed to encrypt: ' + batch[j].name, 'error');
+    try {
+        for (let i = 0; i < fileArr.length; i += BATCH) {
+            const batch = fileArr.slice(i, i + BATCH);
+            // Isolate read/encryption errors so other files in the batch can still import.
+            const results = await Promise.allSettled(batch.map(async f => {
+                const buf = await f.arrayBuffer();
+                const name = sanitizeFilename(f.name),
+                    mime = f.type || getMime(name),
+                    { iv, blob } = await Crypto.encryptBin(App.key, buf),
+                    nodeId = uid();
+                const node = {
+                    id: nodeId, type: 'file', name, mime, size: f.size,
+                    parentId: targetFolderId, ctime: Date.now(), mtime: Date.now()
+                };
+                return { node, rec: { id: nodeId, cid: App.container.id, iv: Array.from(iv), blob } };
+            }));
+            // Batch-save all encrypted records in a single IDB transaction
+            const added = [];
+            for (let j = 0; j < results.length; j++) {
+                if (results[j].status === 'fulfilled') {
+                    added.push(results[j].value);
+                } else {
+                    console.error('upload error', batch[j].name, results[j].reason);
+                    toast('Failed to import: ' + batch[j].name, 'error');
+                }
             }
+            if (added.length) {
+                await DB.saveFiles(added.map(item => item.rec));
+                for (const item of added) {
+                    VFS.add(item.node);
+                    _okIds.push(item.node.id);
+                    ok++;
+                }
+            }
+            showLoading(`Encrypting... ${Math.min(i + BATCH, fileArr.length)}/${fileArr.length}`);
         }
-        if (recs.length) await DB.saveFiles(recs);
-        showLoading(`Encrypting... ${Math.min(i + BATCH, fileArr.length)}/${fileArr.length}`);
+    } catch (e) {
+        console.error('upload error', e);
+        toast('Import failed: ' + e.message, 'error');
     }
     await saveVFS();
     Desktop._patchIcons();
     hideLoading();
     if (ok > 0) {
         toast(`${ok} file${ok > 1 ? 's' : ''} imported`, 'success');
-        logActivity('upload', ok === 1 ? files[0].name : `${ok} files`, ok, ok === 1 && _okIds[0] ? VFS.fullPath(_okIds[0]) : null);
+        logActivity('upload', ok === 1 ? VFS.node(_okIds[0]).name : `${ok} files`, ok, ok === 1 && _okIds[0] ? VFS.fullPath(_okIds[0]) : null);
         _scheduleExportCacheRefresh();
     }
 }
@@ -90,14 +108,14 @@ async function uploadFiles(files) {
 // Read all entries from a FileSystemDirectoryReader.
 // The API only returns up to 100 entries per call — must batch until empty.
 function _readAllEntries(reader) {
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
         const results = [];
         function batch() {
             reader.readEntries(entries => {
                 if (!entries.length) { resolve(results); return; }
                 results.push(...entries);
                 batch();
-            }, () => resolve(results)); // on error, return what we have
+            }, reject);
         }
         batch();
     });
@@ -124,11 +142,27 @@ async function _uploadFileEntry(fileEntry, targetFolderId) {
         mime = file.type || getMime(name),
         { iv, blob } = await Crypto.encryptBin(App.key, buf),
         nodeId = uid(), now = Date.now();
-    VFS.add({
-        id: nodeId, type: 'file', name, mime, size: file.size,
-        parentId: targetFolderId, ctime: now, mtime: now
-    });
-    await DB.saveFile({ id: nodeId, cid: App.container.id, iv: Array.from(iv), blob });
+    const reservation = `${targetFolderId}\0${name.toLowerCase()}`;
+    if (VFS.hasChildNamed(targetFolderId, name) || _uploadPendingNames.has(reservation)) {
+        toast(`"${name}" already exists — skipped`, 'warn');
+        return false;
+    }
+    if (VFS.totalSize() + _uploadReservedSize + file.size > CONTAINER_LIMIT) {
+        _uploadLimitHit = true;
+        return false;
+    }
+    _uploadPendingNames.add(reservation);
+    _uploadReservedSize += file.size;
+    try {
+        await DB.saveFile({ id: nodeId, cid: App.container.id, iv: Array.from(iv), blob });
+        VFS.add({
+            id: nodeId, type: 'file', name, mime, size: file.size,
+            parentId: targetFolderId, ctime: now, mtime: now
+        });
+    } finally {
+        _uploadPendingNames.delete(reservation);
+        _uploadReservedSize -= file.size;
+    }
     return true;
 }
 
@@ -141,26 +175,37 @@ async function _uploadDirEntry(dirEntry, targetFolderId, depth) {
         return false;
     }
     const folderId = uid(), now = Date.now();
-    VFS.add({ id: folderId, type: 'folder', name, parentId: targetFolderId, ctime: now, mtime: now });
     const entries = await _readAllEntries(dirEntry.createReader());
+    VFS.add({ id: folderId, type: 'folder', name, parentId: targetFolderId, ctime: now, mtime: now });
     const fileEntries = entries.filter(e => e.isFile);
     const subDirEntries = entries.filter(e => e.isDirectory);
     // Encrypt files in this directory in parallel batches
     const BATCH = _CRYPTO_CONCURRENCY;
     for (let i = 0; i < fileEntries.length; i += BATCH) {
-        await Promise.allSettled(
-            fileEntries.slice(i, i + BATCH).map(e => _uploadFileEntry(e, folderId))
-        );
+        const batch = fileEntries.slice(i, i + BATCH);
+        const results = await Promise.allSettled(batch.map(e => _uploadFileEntry(e, folderId)));
+        results.forEach((result, j) => {
+            if (result.status === 'rejected') _reportUploadEntryError(batch[j].name, result.reason);
+        });
     }
     // Recurse into subdirectories sequentially
     for (const subDir of subDirEntries) {
-        await _uploadDirEntry(subDir, folderId, depth + 1);
+        try { await _uploadDirEntry(subDir, folderId, depth + 1); }
+        catch (err) { _reportUploadEntryError(subDir.name, err); }
     }
     return true;
 }
 
 let _uploadLimitHit = false;
 let _uploadDeviceFullHit = false;
+let _uploadEntryErrors = 0, _uploadReservedSize = 0;
+const _uploadPendingNames = new Set();
+
+function _reportUploadEntryError(name, err) {
+    _uploadEntryErrors++;
+    console.error('upload entry error', name, err);
+    toast(`Failed to import: ${name}`, 'error');
+}
 
 // Main drop entry point for desktop and folder-window drop events.
 // Accepts DataTransferItemList (supports both files and folders).
@@ -170,12 +215,13 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
     if (!itemArr.length) return;
     _uploadLimitHit = false;
     _uploadDeviceFullHit = false;
+    _uploadEntryErrors = 0;
 
     const entries = itemArr.map(i => i.webkitGetAsEntry?.()).filter(Boolean);
     if (!entries.length) {
         // Fallback: no Entry API support — treat all as flat files
         const files = itemArr.map(i => i.getAsFile?.()).filter(Boolean);
-        if (files.length) await uploadFiles(files);
+        if (files.length) await uploadFiles(files, targetFolderId);
         return;
     }
 
@@ -195,8 +241,7 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
                 : await _uploadFileEntry(entry, targetFolderId);
             if (added) ok++;
         } catch (err) {
-            console.error('upload entry error', entry.name, err);
-            toast(`Failed to import: ${entry.name}`, 'error');
+            _reportUploadEntryError(entry.name, err);
         }
     }
     await saveVFS();
@@ -204,7 +249,7 @@ async function uploadEntries(dataTransferItems, targetFolderId) {
     if (typeof WinManager !== 'undefined') WinManager.renderAll();
     hideLoading();
     if (ok > 0) {
-        toast(`${ok} item${ok !== 1 ? 's' : ''} imported`, 'success');
+        toast(`${ok} item${ok !== 1 ? 's' : ''} imported${_uploadEntryErrors ? `; ${_uploadEntryErrors} failed` : ''}`, _uploadEntryErrors ? 'warn' : 'success');
         {
             const _sn = ok === 1 ? VFS.children(targetFolderId).find(n => n.name === sanitizeFilename(entries[0]?.name || '')) : null;
             logActivity('upload', ok === 1 ? (entries[0]?.name ?? '1 item') : `${ok} items`, ok, _sn ? VFS.fullPath(_sn.id) : null);
@@ -250,7 +295,12 @@ async function downloadFile(node) {
     try {
         const rec = await DB.getFile(node.id);
         if (!rec) { toast('File data not found', 'error'); hideLoading(); return; }
-        const buf = await Crypto.decryptBin(App.key, rec.iv, rec.blob);
+        let buf;
+        if (!rec.blob || (rec.blob instanceof ArrayBuffer && rec.blob.byteLength === 0)) {
+            buf = new ArrayBuffer(0);
+        } else {
+            buf = await Crypto.decryptBin(App.key, rec.iv, rec.blob);
+        }
         downloadBuf(buf, node.name, node.mime || getMime(node.name));
         toast('Exported: ' + node.name, 'success');
         logActivity('download', node.name, 1, VFS.fullPath(node.id));
@@ -323,7 +373,14 @@ async function deleteSelected() {
                 walk(id);
             }
         }
-        if (allFileIds.length) await DB.deleteFiles(allFileIds).catch(() => { });
+        try {
+            if (allFileIds.length) await DB.deleteFiles(allFileIds);
+        } catch (e) {
+            console.error('delete error', e);
+            hideLoading();
+            toast('Delete failed: ' + e.message, 'error');
+            return;
+        }
         allFileIds.forEach(fid => { delete App.thumbCache[fid]; });
         const _delSinglePath = ids.length === 1 ? VFS.fullPath(ids[0]) : null;
         for (const id of ids) VFS.remove(id);
@@ -359,32 +416,49 @@ function newTextFile() {
     }, 100);
 }
 
+let _creatingTextFile = false;
 async function createTextFile() {
+    if (_creatingTextFile) return;
+    _creatingTextFile = true;
+    try {
+        await _createTextFile();
+    } catch (e) {
+        console.error('create file error', e);
+        toast('Could not create file: ' + e.message, 'error');
+    } finally {
+        _creatingTextFile = false;
+    }
+}
+
+async function _createTextFile() {
     const name = sanitizeFilename(document.getElementById('nf-name').value.trim());
     if (!name || name === 'unnamed') { toast('Enter a valid file name', 'error'); return; }
     // Capture context BEFORE Overlay.hide() clears it
     const targetFolder = App.folder,
-        winCtx = App._winCtx;
+        winCtx = App._winCtx, screenPos = App._ctxScreenPos,
+        key = App.key, cid = App.container.id;
     // Duplicate name check
     if (VFS.hasChildNamed(targetFolder, name)) {
         toast(`“${name}” already exists in this folder`, 'error'); return;
     }
+    App._ctxScreenPos = null;
     Overlay.hide();
 
     const nodeId = uid();
     const mime = getMime(name);
     const emptyBuf = new ArrayBuffer(0);
-    const { iv, blob } = await Crypto.encryptBin(App.key, emptyBuf);
+    const { iv, blob } = await Crypto.encryptBin(key, emptyBuf);
+    await DB.saveFile({ id: nodeId, cid, iv: Array.from(iv), blob });
     VFS.add({
         id: nodeId, type: 'file', name, mime, size: 0,
         parentId: targetFolder, ctime: Date.now(), mtime: Date.now()
     });
     // Position at context menu cursor if available
-    if (App._ctxScreenPos) {
+    if (screenPos) {
         const area2 = winCtx ? winCtx.el.querySelector('.fw-area') : document.getElementById('desktop-area');
         const rect2 = area2.getBoundingClientRect();
-        const rawX = App._ctxScreenPos.x - rect2.left + area2.scrollLeft;
-        const rawY = App._ctxScreenPos.y - rect2.top + area2.scrollTop;
+        const rawX = screenPos.x - rect2.left + area2.scrollLeft;
+        const rawY = screenPos.y - rect2.top + area2.scrollTop;
         const occ = new Map();
         VFS.children(targetFolder).forEach(n => {
             if (n.id === nodeId) return;
@@ -393,9 +467,7 @@ async function createTextFile() {
         });
         const snapped = _snapFreeCell(rawX, rawY, occ);
         VFS.setPos(targetFolder, nodeId, snapped.x, snapped.y);
-        App._ctxScreenPos = null;
     }
-    await DB.saveFile({ id: nodeId, cid: App.container.id, iv: Array.from(iv), blob });
     await saveVFS();
     if (winCtx) winCtx.render(); else Desktop._patchIcons();
     toast(`File “${name}” created`, 'success');
@@ -561,6 +633,9 @@ function _dedupName(folderId, name) {
 async function pasteItems() {
     if (!App.clipboard) return;
     const { op, ids } = App.clipboard;
+    // Keep the destination stable while copying blobs asynchronously.
+    const folderId = App.folder, winCtx = App._winCtx, screenPos = App._ctxScreenPos;
+    App._ctxScreenPos = null;
 
     // Prevent pasting a cut folder if it's currently open in Explorer windows
     if (op === 'cut') {
@@ -579,64 +654,98 @@ async function pasteItems() {
     for (const id of ids) {
         const n = VFS.node(id); if (!n) continue;
         if (op === 'cut') {
-            if (n.parentId === App.folder) continue;
-            const result = VFS.move(id, App.folder);
+            if (n.parentId === folderId) continue;
+            const result = VFS.move(id, folderId);
             if (result === 'duplicate') { toast(`"${n.name}" already exists in this folder`, 'error'); continue; }
             if (result === 'cycle') { toast(`Cannot paste "${n.name}" into itself or a subfolder`, 'error'); continue; }
             _pastedSn = n.name;
             _pastedIds.push(id);
         } else {
+            // Copying a folder into its own tree would recursively copy the new copy.
+            if (n.type === 'folder') {
+                let parent = folderId;
+                const seen = new Set();
+                while (parent && !seen.has(parent) && parent !== id) {
+                    seen.add(parent);
+                    parent = VFS.node(parent)?.parentId;
+                }
+                if (parent === id) {
+                    toast(`Cannot paste "${n.name}" into itself or a subfolder`, 'error');
+                    continue;
+                }
+            }
             let name = n.name;
-            if (VFS.hasChildNamed(App.folder, name)) name = _dedupName(App.folder, name);
-            const newId = await deepCopy(id, App.folder, name !== n.name ? name : undefined);
-            _pastedSn = name;
-            if (newId) _pastedIds.push(newId);
+            if (VFS.hasChildNamed(folderId, name)) name = _dedupName(folderId, name);
+            try {
+                const newId = await deepCopy(id, folderId, name !== n.name ? name : undefined);
+                if (newId) { _pastedSn = VFS.node(newId).name; _pastedIds.push(newId); }
+            } catch (e) {
+                console.error('copy error', e);
+                toast(`Copy failed: "${n.name}" — ${e.message}`, 'error');
+            }
         }
     }
     // Position pasted items at the context-menu cursor (set by right-click / long-press Paste)
-    if (App._ctxScreenPos && _pastedIds.length > 0) {
-        const winCtx = App._winCtx;
+    if (screenPos && _pastedIds.length > 0) {
         const area2 = winCtx ? winCtx.el.querySelector('.fw-area') : document.getElementById('desktop-area');
         const rect2 = area2.getBoundingClientRect();
-        const rawX = App._ctxScreenPos.x - rect2.left + area2.scrollLeft;
-        const rawY = App._ctxScreenPos.y - rect2.top + area2.scrollTop;
+        const rawX = screenPos.x - rect2.left + area2.scrollLeft;
+        const rawY = screenPos.y - rect2.top + area2.scrollTop;
         const occ = new Map();
-        VFS.children(App.folder).forEach(n => {
+        VFS.children(folderId).forEach(n => {
             if (_pastedIds.includes(n.id)) return;
-            const p = VFS.getPos(App.folder, n.id);
+            const p = VFS.getPos(folderId, n.id);
             if (p) occ.set(`${Math.round((p.x - 8) / GRID_X)}_${Math.round((p.y - 8) / GRID_Y)}`, n.id);
         });
         _pastedIds.forEach(id => {
             const snapped = _snapFreeCell(rawX, rawY, occ);
-            VFS.setPos(App.folder, id, snapped.x, snapped.y);
+            VFS.setPos(folderId, id, snapped.x, snapped.y);
             occ.set(`${Math.round((snapped.x - 8) / GRID_X)}_${Math.round((snapped.y - 8) / GRID_Y)}`, id);
         });
-        App._ctxScreenPos = null;
     }
-    if (op === 'cut') App.clipboard = null;
+    if (op === 'cut') {
+        const pending = ids.filter(id => VFS.node(id) && !_pastedIds.includes(id));
+        App.clipboard = pending.length ? { op, ids: pending } : null;
+    }
     _applyCutStyles();
     await saveVFS();
     // Refresh all open views so both source and target folders update
     Desktop._patchIcons();
     if (typeof WinManager !== 'undefined') WinManager.renderAll();
-    logActivity('paste', ids.length === 1 ? (_pastedSn ?? VFS.node(ids[0])?.name ?? '1 item') : `${ids.length} items`, ids.length, _srcFolderPath, VFS.fullPath(App.folder));
+    if (_pastedIds.length) logActivity('paste', _pastedIds.length === 1 ? _pastedSn : `${_pastedIds.length} items`, _pastedIds.length, _srcFolderPath, VFS.fullPath(folderId));
     // Copy paste creates new file blobs — refresh the export cache
     if (op === 'copy') _scheduleExportCacheRefresh();
 }
 
-async function deepCopy(nodeId, newParent, newName, _depth = 0) {
-    if (_depth > 64 || nodeId === 'root') return null;
-    const n = VFS.node(nodeId); if (!n) return null;
-    const newId = uid();
-    const name = newName || n.name;
-    if (n.type === 'file') {
-        VFS.add({ ...n, id: newId, name, parentId: newParent, ctime: Date.now(), mtime: Date.now() });
-        const rec = await DB.getFile(nodeId);
-        if (rec) await DB.saveFile({ ...rec, id: newId, cid: App.container.id });
-    } else {
-        VFS.add({ ...n, id: newId, name, parentId: newParent, ctime: Date.now(), mtime: Date.now() });
-        for (const child of VFS.children(nodeId)) await deepCopy(child.id, newId, undefined, _depth + 1);
+async function deepCopy(nodeId, newParent, newName) {
+    if (nodeId === 'root' || !VFS.node(nodeId)) return null;
+    const nodes = [], records = [], seen = new Set(), cid = App.container.id, initialSize = VFS.totalSize();
+    let copiedSize = 0;
+    async function collect(id, parentId, name, depth) {
+        if (depth > 64 || seen.has(id)) throw new Error('Folder nesting too deep or invalid');
+        seen.add(id);
+        const n = VFS.node(id);
+        if (!n) throw new Error('Source item not found');
+        const newId = uid();
+        nodes.push({ ...n, id: newId, name: name || n.name, parentId, ctime: Date.now(), mtime: Date.now() });
+        if (n.type === 'file') {
+            copiedSize += n.size || 0;
+            if (initialSize + copiedSize > CONTAINER_LIMIT) throw new Error('Container limit reached');
+            const rec = await DB.getFile(id);
+            if (!rec) throw new Error('File data not found: ' + n.name);
+            records.push({ ...rec, id: newId, cid });
+        } else {
+            for (const child of VFS.children(id)) await collect(child.id, newId, undefined, depth + 1);
+        }
+        return newId;
     }
+    const newId = await collect(nodeId, newParent, newName, 0);
+    if (VFS.totalSize() + copiedSize > CONTAINER_LIMIT) throw new Error('Container limit reached');
+    // Commit all blobs in one transaction before exposing the copied tree in the VFS.
+    if (records.length) await DB.saveFiles(records);
+    // Another copy can finish while this one is saving; resolve its name at commit time.
+    if (VFS.hasChildNamed(newParent, nodes[0].name)) nodes[0].name = _dedupName(newParent, nodes[0].name);
+    nodes.forEach(n => VFS.add(n));
     return newId;
 }
 
@@ -644,10 +753,10 @@ async function deepCopy(nodeId, newParent, newName, _depth = 0) {
    SELECT ALL / SORT
    ============================================================ */
 function selectAll() {
+    const area = App._winCtx ? App._winCtx.el.querySelector('.fw-area') : document.getElementById('desktop-area');
     VFS.children(App.folder).forEach(n => {
         App.selection.add(n.id);
-        // Look in both main desktop and any folder windows
-        const el = document.querySelector(`.file-item[data-id="${n.id}"]`);
+        const el = area.querySelector(`:scope > .file-item[data-id="${n.id}"]`);
         if (el) el.classList.add('selected');
     });
     if (App._winCtx) App._winCtx._updateStatus();
@@ -840,6 +949,7 @@ function _scheduleLineNumberUpdate() {
    ============================================================ */
 let _editorNode = null;
 let _editorOriginal = '';
+let _editorSaving = false;
 
 function openEditor(node, buf) {
     _editorNode = node;
@@ -904,13 +1014,16 @@ function openEditor(node, buf) {
 }
 
 async function saveEditor() {
-    if (!_editorNode || !App.key) return;
+    if (!_editorNode || !App.key || _editorSaving) return false;
 
-    const text = document.getElementById('editor-textarea').value;
+    const node = _editorNode;
+    const key = App.key, cid = App.container.id;
+    const ta = document.getElementById('editor-textarea');
+    const text = ta.value;
     const buf = new TextEncoder().encode(text);
     // Container limit check: compare projected total against CONTAINER_LIMIT.
     // VFS.totalSize() still contains the old size for this node at this point.
-    const _oldSize = _editorNode.size || 0;
+    const _oldSize = node.size || 0;
     const _delta = buf.byteLength - _oldSize;
     if (_delta > 0 && VFS.totalSize() + _delta > CONTAINER_LIMIT) {
         toast(`Cannot save: container limit reached (${fmtSize(CONTAINER_LIMIT)})`, 'error');
@@ -923,23 +1036,28 @@ async function saveEditor() {
         return;
     }
 
+    if (_editorSaving) return false;
+    _editorSaving = true;
     let saved = false;
     showLoading('Saving...');
     try {
-        const { iv, blob } = await Crypto.encryptBin(App.key, buf.buffer);
-        _editorNode.size = buf.byteLength;
-        _editorNode.mtime = Date.now();
-        VFS.add(_editorNode);
-        await DB.saveFile({ id: _editorNode.id, cid: App.container.id, iv: Array.from(iv), blob });
-        _editorOriginal = text;
-        document.getElementById('editor-meta-modified').style.display = 'none';
+        const { iv, blob } = await Crypto.encryptBin(key, buf.buffer);
+        await DB.saveFile({ id: node.id, cid, iv: Array.from(iv), blob });
+        node.size = buf.byteLength;
+        node.mtime = Date.now();
+        VFS.add(node);
         await saveVFS();
+        if (_editorNode === node) {
+            _editorOriginal = text;
+            document.getElementById('editor-meta-modified').style.display = ta.value === text ? 'none' : '';
+        }
         Desktop._patchIcons();
         toast('File saved', 'success');
-        logActivity('edit', _editorNode.name, 1, VFS.fullPath(_editorNode.id));
+        logActivity('edit', node.name, 1, VFS.fullPath(node.id));
         _scheduleExportCacheRefresh();
         saved = true;
     } catch (e) { toast('Save failed: ' + e.message, 'error'); console.error(e); }
+    _editorSaving = false;
     hideLoading();
     return saved;
 }
@@ -972,8 +1090,11 @@ function discardEditor() {
 }
 
 async function saveAndCloseEditor() {
+    const node = _editorNode;
     const ok = await saveEditor();
-    if (ok) { Overlay.hide(); _editorNode = null; _clearEditorMemory(); }
+    if (ok && _editorNode === node && document.getElementById('editor-textarea').value === _editorOriginal) {
+        Overlay.hide(); _editorNode = null; _clearEditorMemory();
+    }
 }
 
 /* ============================================================
@@ -1075,12 +1196,7 @@ function _buildCustomPlayer(url, kind) {
     media.addEventListener('pause', () => { btnPlay.innerHTML = playIcon; });
     media.addEventListener('ended', () => { btnPlay.innerHTML = playIcon; });
 
-    let _seeking = false;
-    seek.addEventListener('mousedown', () => { _seeking = true; });
-    seek.addEventListener('touchstart', () => { _seeking = true; }, { passive: true });
-    seek.addEventListener('input', () => { if (_seeking) media.currentTime = seek.value; });
-    seek.addEventListener('mouseup', () => { _seeking = false; media.currentTime = seek.value; });
-    seek.addEventListener('touchend', () => { _seeking = false; media.currentTime = seek.value; });
+    seek.addEventListener('input', () => { media.currentTime = seek.value; });
 
     // Volume
     const btnVol = document.createElement('button');
@@ -1088,16 +1204,20 @@ function _buildCustomPlayer(url, kind) {
     const volIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor"/><path d="M12 4.5c1.3 1 2 2.3 2 3.5s-.7 2.5-2 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
     const muteIcon = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor"/><path d="M12 5l4 6M16 5l-4 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
     btnVol.innerHTML = volIcon;
-    btnVol.addEventListener('click', () => {
+    let lastVolume = media.volume;
+    function toggleMute() {
+        if (media.muted && media.volume === 0) media.volume = lastVolume;
         media.muted = !media.muted;
         btnVol.innerHTML = media.muted ? muteIcon : volIcon;
         vol.value = media.muted ? 0 : media.volume;
-    });
+    }
+    btnVol.addEventListener('click', toggleMute);
 
     const vol = document.createElement('input');
     vol.type = 'range'; vol.className = 'player-vol'; vol.min = 0; vol.max = 1; vol.step = 0.01; vol.value = 1;
     vol.addEventListener('input', () => {
         media.volume = vol.value;
+        if (media.volume > 0) lastVolume = media.volume;
         media.muted = vol.value == 0;
         btnVol.innerHTML = media.muted ? muteIcon : volIcon;
     });
@@ -1142,9 +1262,9 @@ function _buildCustomPlayer(url, kind) {
 
     // Keyboard shortcuts: Space = play/pause, ←/→ = ±5s, F = fullscreen, M = mute
     const _onKey = e => {
-        if (!wrap.isConnected) return;
+        if (!wrap.isConnected || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
         const tag = e.target?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable || (tag === 'BUTTON' && e.code === 'Space')) return;
         if (e.code === 'Space') { e.preventDefault(); media.paused ? media.play() : media.pause(); }
         if (e.code === 'ArrowLeft') { e.preventDefault(); media.currentTime = Math.max(0, media.currentTime - 5); }
         if (e.code === 'ArrowRight') { e.preventDefault(); media.currentTime = Math.min(media.duration || Infinity, media.currentTime + 5); }
@@ -1153,7 +1273,7 @@ function _buildCustomPlayer(url, kind) {
             if (!document.fullscreenElement) wrap.requestFullscreen?.();
             else document.exitFullscreen?.();
         }
-        if (e.code === 'KeyM') { e.preventDefault(); media.muted = !media.muted; btnVol.innerHTML = media.muted ? muteIcon : volIcon; vol.value = media.muted ? 0 : media.volume; }
+        if (e.code === 'KeyM') { e.preventDefault(); toggleMute(); }
     };
     document.addEventListener('keydown', _onKey);
     wrap._cleanupKeyboard = () => document.removeEventListener('keydown', _onKey);
@@ -1375,6 +1495,7 @@ async function exportAsZip(nodeIds, zipName) {
             _zipSeen.add(nodeId);
             const n = VFS.node(nodeId); if (!n) return;
             if (n.type === 'folder') {
+                entries.push({ name: prefix + n.name + '/', data: new Uint8Array(0), mtime: n.mtime || n.ctime });
                 for (const c of VFS.children(nodeId)) _collectFlat(c.id, prefix + n.name + '/', _depth + 1);
             } else {
                 _flat.push({ id: nodeId, name: prefix + n.name, mtime: n.mtime || n.ctime });
@@ -1384,16 +1505,18 @@ async function exportAsZip(nodeIds, zipName) {
         // Fetch all file records in one IDB transaction, then decrypt fully in parallel
         const fileMap = await DB.getFilesByIds(_flat.map(f => f.id));
         const decResults = await Promise.allSettled(_flat.map(async item => {
-            const rec = fileMap.get(item.id); if (!rec) return null;
+            const rec = fileMap.get(item.id); if (!rec) throw new Error('File data not found: ' + item.name);
             const buf = await Crypto.decryptBin(App.key, rec.iv, rec.blob);
             return { name: item.name, data: new Uint8Array(buf), mtime: item.mtime };
         }));
+        const failed = decResults.find(r => r.status === 'rejected');
+        if (failed) throw failed.reason;
         decResults.forEach(r => { if (r.status === 'fulfilled' && r.value) entries.push(r.value); });
         if (!entries.length) { toast('Nothing to export', 'warn'); hideLoading(); return; }
         const zipParts = _buildZip(entries);
         downloadBuf(zipParts, zipName, 'application/zip');
-        toast(`Exported ${entries.length} file${entries.length !== 1 ? 's' : ''} as ZIP`, 'success');
-        logActivity('export-zip', nodeIds.length === 1 ? (VFS.node(nodeIds[0])?.name ?? entries[0]?.name ?? '1 file') : `${entries.length} files`, entries.length, nodeIds.length === 1 ? VFS.fullPath(nodeIds[0]) : null);
+        toast(`Exported ${_flat.length} file${_flat.length !== 1 ? 's' : ''} as ZIP`, 'success');
+        logActivity('export-zip', nodeIds.length === 1 ? (VFS.node(nodeIds[0])?.name ?? entries[0]?.name ?? '1 file') : `${_flat.length} files`, _flat.length, nodeIds.length === 1 ? VFS.fullPath(nodeIds[0]) : null);
     } catch (e) { toast('ZIP export failed: ' + e.message, 'error'); console.error(e); }
     hideLoading();
 }
@@ -1415,6 +1538,7 @@ function _askExportPassword(c) {
         const btnOk = document.getElementById('exp-ok');
         document.getElementById('exp-cont-name').textContent = c.name;
         document.getElementById('exp-pw').value = '';
+        setPwVisibility('exp-pw', 'exp-eye');
         errEl.innerHTML = '';
         errEl.style.color = '';
         btnOk.disabled = false;

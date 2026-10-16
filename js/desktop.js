@@ -818,11 +818,10 @@ function _updateDuressUI(isActive) {
 
 function _resetDuressForm() {
     const pw = document.getElementById('duress-pw'),
-        pw2 = document.getElementById('duress-pw2'),
-        eye1 = document.getElementById('duress-pw-eye');
+        pw2 = document.getElementById('duress-pw2');
     pw.value = ''; pw2.value = '';
     pw.type = 'password'; pw2.type = 'password';
-    eye1.style.color = ''; eye1.innerHTML = Icons.eye;
+    setPwVisibility('duress-pw', 'duress-pw-eye');
     document.getElementById('duress-pw-strength').style.width = '0%';
     document.getElementById('duress-pw-strength').style.height = '0';
     document.getElementById('duress-pw-strength').style.marginTop = '0';
@@ -2000,6 +1999,8 @@ function _rubberBandSelect(e, area, sel, onUpdate) {
 function _startIconDrag(e, node, el, srcCtx) {
     e.stopPropagation(); e.preventDefault();
     _cancelHoverTooltip();
+    // preventDefault suppresses the browser's normal focus transfer on click.
+    srcCtx.area.focus({ preventScroll: true });
 
     const wasSelected = srcCtx.selection.has(node.id);
     if (!e.ctrlKey && !e.metaKey && !wasSelected) srcCtx.clearAll();
@@ -2324,6 +2325,12 @@ function _startIconDrag(e, node, el, srcCtx) {
                 srcCtx.selection.delete(node.id);
                 el.classList.remove('selected');
                 srcCtx.updateUI();
+            } else if (!e.ctrlKey && !e.metaKey && srcCtx.selection.size > 1) {
+                // Preserve the group while dragging, but a plain click selects one item.
+                srcCtx.clearAll();
+                srcCtx.selection.add(node.id);
+                el.classList.add('selected');
+                srcCtx.updateUI();
             }
             // Click without drag — restore visibility for FW items
             if (!isDesktop) {
@@ -2530,13 +2537,15 @@ function _handleKey(e, owner, syncCtx, withSync, opts = {}) {
     } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyX' && owner.selection.size > 0) {
         withSync(() => cutItems());
     } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
+        e.preventDefault();
         syncCtx(); pasteItems();
     } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyA') {
+        e.preventDefault();
         syncCtx(); selectAll();
     } else if (e.key === 'Escape') {
         if (App.clipboard?.op === 'cut') cancelClipboard();
         owner.selection.clear();
-        (opts.area || document).querySelectorAll('.file-item.selected').forEach(i => i.classList.remove('selected'));
+        (opts.area || document).querySelectorAll(opts.area ? ':scope > .file-item.selected' : '.file-item.selected').forEach(i => i.classList.remove('selected'));
         owner._updateStatus();
     } else if (e.key === 'F2' && owner.selection.size === 1) {
         renameNode(VFS.node([...owner.selection][0]));
@@ -2636,6 +2645,8 @@ function _buildIconMenuItems(node, sel, opts) {
 
 /* ---- Shared icon-area render (Desktop + FolderWindow): full rebuild or incremental ---- */
 function _renderIconArea(area, folderId, selection, updateStatusFn, forceRebuild) {
+    // Every render supersedes queued chunks, including navigation to an empty folder.
+    const token = (area._renderToken = (area._renderToken || 0) + 1);
     const items = VFS.children(folderId);
     items.sort((a, b) => a.type !== b.type ? (a.type === 'folder' ? -1 : 1) : a.name.localeCompare(b.name));
     area.classList.toggle('no-grid-dots', !_getSettings().gridDots);
@@ -2652,7 +2663,6 @@ function _renderIconArea(area, folderId, selection, updateStatusFn, forceRebuild
         const needPos = items.filter(n => !VFS.getPos(folderId, n.id));
         if (needPos.length) VFS.autoPosBatch(folderId, needPos, area);
         const useAnim = items.length <= 200;
-        const token = (area._renderToken = (area._renderToken || 0) + 1);
         const renderChunk = (start) => {
             if (area._renderToken !== token) return;
             const frag = document.createDocumentFragment(),
@@ -2957,6 +2967,8 @@ const Desktop = {
     },
 
     _onKey(e) {
+        // Folder windows are inside desktop-area and handle their own shortcuts.
+        if (e.target.closest('.folder-window')) return;
         const sync = () => { App.folder = this._desktopFolder; App.selection = this._sel; App._winCtx = null; };
         _handleKey(e, this, sync, fn => { sync(); fn(); }, {
             area: document.getElementById('desktop-area'),
@@ -3334,8 +3346,8 @@ class FolderWindow {
         showCtxMenu(e.clientX, e.clientY, _buildIconMenuItems(node, this.selection, {
             openFn: n => n.type === 'folder' ? this._openNode(n) : openFile(n),
             colorCb: () => this.render(),
-            hasCopy: false,
-            copyFn: null,
+            hasCopy: true,
+            copyFn: () => this._withCtxSync(() => copyItems()),
             cutFn: () => this._withCtxSync(() => cutItems()),
             exportZipFn: () => this._withCtxSync(() => exportAsZip([...this.selection])),
             deleteFn: () => { this._setCtx(); deleteSelected(); },
@@ -3371,7 +3383,7 @@ class FolderWindow {
 
     _onKey(e) {
         _handleKey(e, this, () => this._setCtx(), fn => this._withCtxSync(fn), {
-            area: this.el,
+            area: this.el.querySelector('.fw-area'),
             refresh: () => { this.render(); this.el.querySelector('.fw-area')?.focus(); },
             extraKeys: ev => {
                 if (ev.key === 'Backspace' && !ev.ctrlKey && !ev.metaKey) {

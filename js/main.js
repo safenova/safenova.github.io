@@ -48,24 +48,28 @@
 /* ============================================================
    PASSWORD EYE TOGGLE
    ============================================================ */
-function togglePwEye(inputId, btnId) {
+function setPwVisibility(inputId, btnId, visible = false) {
     const input = document.getElementById(inputId),
         btn = document.getElementById(btnId);
-    if (input.type === 'password') {
-        input.type = 'text';
-        btn.style.color = 'var(--accent)';
-        btn.innerHTML = Icons.eyeoff;
-    } else {
-        input.type = 'password';
-        btn.style.color = '';
-        btn.innerHTML = Icons.eye;
-    }
+    input.type = visible ? 'text' : 'password';
+    btn.style.color = visible ? 'var(--accent)' : '';
+    btn.innerHTML = visible ? Icons.eyeoff : Icons.eye;
+    btn.setAttribute('aria-label', visible ? 'Hide password' : 'Show password');
+    btn.setAttribute('aria-pressed', String(visible));
+}
+
+function togglePwEye(inputId, btnId) {
+    setPwVisibility(inputId, btnId, document.getElementById(inputId).type === 'password');
 }
 
 /* ============================================================
    EVENT LISTENERS
    ============================================================ */
 function initEvents() {
+    [['nc-pw', 'nc-pw-eye'], ['unlock-pw', 'unlock-pw-eye'],
+    ['exp-pw', 'exp-eye'], ['cp-old', 'cp-old-eye'],
+    ['cp-new', 'cp-new-eye'], ['duress-pw', 'duress-pw-eye']]
+        .forEach(([input, button]) => setPwVisibility(input, button));
 
     /* ---- Home ---- */
     document.getElementById('btn-new-container').addEventListener('click', openNewContainerModal);
@@ -91,19 +95,16 @@ function initEvents() {
     document.getElementById('nc-pw2').addEventListener('keydown', e => { if (e.key === 'Enter') createContainer(); });
 
     /* ---- Unlock ---- */
-    document.getElementById('btn-back').addEventListener('click', () => App.showView('home'));
+    document.getElementById('btn-back').addEventListener('click', () => {
+        cancelUnlock();
+        App.showView('home');
+    });
     document.getElementById('btn-unlock').addEventListener('click', doUnlock);
     document.getElementById('unlock-pw').addEventListener('keydown', e => { if (e.key === 'Enter') doUnlock(); });
     document.getElementById('unlock-pw-eye').addEventListener('click', () => togglePwEye('unlock-pw', 'unlock-pw-eye'));
 
     /* ---- Export password modal eye toggle ---- */
-    document.getElementById('exp-eye')?.addEventListener('click', () => {
-        const inp = document.getElementById('exp-pw');
-        const show = inp.type === 'password';
-        inp.type = show ? 'text' : 'password';
-        document.querySelector('#exp-eye .eye-open').style.display = show ? 'none' : '';
-        document.querySelector('#exp-eye .eye-closed').style.display = show ? '' : 'none';
-    });
+    document.getElementById('exp-eye')?.addEventListener('click', () => togglePwEye('exp-pw', 'exp-eye'));
 
     /* ---- Remember scope toggle ---- */
     document.getElementById('unlock-remember').addEventListener('change', e => {
